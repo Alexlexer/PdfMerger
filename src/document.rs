@@ -14,6 +14,8 @@ use printpdf::{
 use crate::model::{PageDraft, PageItem, PageSource, PreviewData};
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff"];
+const PREVIEW_MAX_WIDTH: u32 = 312;
+const PREVIEW_MAX_HEIGHT: u32 = 416;
 
 #[derive(Debug)]
 pub struct ExportReport {
@@ -48,7 +50,7 @@ pub fn import_file(path: &Path) -> Result<Vec<PageDraft>> {
     if extension == "pdf" {
         import_pdf(path)
     } else if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
-        import_image(path, &extension)
+        import_image(path)
     } else {
         bail!("unsupported file type: {}", path.display());
     }
@@ -76,7 +78,7 @@ fn import_pdf(path: &Path) -> Result<Vec<PageDraft>> {
                 let mut warnings = Vec::new();
                 document
                     .page_to_svg(index, &PdfToSvgOptions::default(), &mut warnings)
-                    .map(|svg| PreviewData::new(svg.into_bytes(), "svg"))
+                    .and_then(|svg| preview_from_svg(&svg).ok())
             });
 
             PageDraft {
@@ -92,20 +94,12 @@ fn import_pdf(path: &Path) -> Result<Vec<PageDraft>> {
         .collect())
 }
 
-fn import_image(path: &Path, extension: &str) -> Result<Vec<PageDraft>> {
+fn import_image(path: &Path) -> Result<Vec<PageDraft>> {
     let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
     let decoded = image::load_from_memory(&bytes)
         .with_context(|| format!("could not decode image {}", path.display()))?;
     let subtitle = format!("Image · {} × {} px", decoded.width(), decoded.height());
-    let preview_extension = match extension {
-        "jpg" | "jpeg" => "jpg",
-        "tif" | "tiff" => "tiff",
-        "png" => "png",
-        "webp" => "webp",
-        "bmp" => "bmp",
-        "gif" => "gif",
-        _ => "img",
-    };
+    let preview = preview_from_image(decoded);
 
     Ok(vec![PageDraft {
         source: PageSource::Image {
@@ -113,8 +107,53 @@ fn import_image(path: &Path, extension: &str) -> Result<Vec<PageDraft>> {
         },
         title: display_name(path),
         subtitle,
-        preview: Some(PreviewData::new(bytes, preview_extension)),
+        preview: Some(preview),
     }])
+}
+
+fn preview_from_image(image: image::DynamicImage) -> PreviewData {
+    let thumbnail = image
+        .resize(
+            PREVIEW_MAX_WIDTH,
+            PREVIEW_MAX_HEIGHT,
+            image::imageops::FilterType::Triangle,
+        )
+        .into_rgba8();
+    PreviewData::new(
+        thumbnail.width() as usize,
+        thumbnail.height() as usize,
+        thumbnail.into_raw(),
+    )
+}
+
+fn preview_from_svg(svg: &str) -> Result<PreviewData> {
+    let mut options = resvg::usvg::Options::default();
+    options.fontdb_mut().load_system_fonts();
+    let tree = resvg::usvg::Tree::from_str(svg, &options)
+        .map_err(|error| anyhow!("could not parse generated preview SVG: {error}"))?;
+    let source_size = tree.size();
+    let scale = (PREVIEW_MAX_WIDTH as f32 / source_size.width())
+        .min(PREVIEW_MAX_HEIGHT as f32 / source_size.height());
+    let width = (source_size.width() * scale)
+        .round()
+        .clamp(1.0, PREVIEW_MAX_WIDTH as f32) as u32;
+    let height = (source_size.height() * scale)
+        .round()
+        .clamp(1.0, PREVIEW_MAX_HEIGHT as f32) as u32;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| anyhow!("could not allocate PDF preview bitmap"))?;
+    pixmap.fill(resvg::tiny_skia::Color::WHITE);
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    Ok(PreviewData::new(
+        width as usize,
+        height as usize,
+        pixmap.data().to_vec(),
+    ))
 }
 
 pub fn export_pages(pages: &[PageItem], output_path: &Path) -> Result<ExportReport> {
@@ -352,6 +391,10 @@ mod tests {
             .save(&image_path)
             .unwrap();
         let drafts = import_file(&image_path).unwrap();
+        let preview = drafts[0].preview.as_ref().unwrap();
+        assert_eq!(preview.size, [312, 156]);
+        assert_eq!(preview.rgba.len(), 312 * 156 * 4);
+
         let mut workspace = Workspace::default();
         workspace.append(drafts);
 
@@ -359,7 +402,31 @@ mod tests {
         assert_eq!(report.page_count, 1);
         assert_eq!(Document::load(&output_path).unwrap().get_pages().len(), 1);
 
+        let pdf_drafts = import_file(&output_path).unwrap();
+        let pdf_preview = pdf_drafts[0].preview.as_ref().unwrap();
+        assert_eq!(
+            pdf_preview.rgba.len(),
+            pdf_preview.size[0] * pdf_preview.size[1] * 4
+        );
+
         let _ = fs::remove_file(image_path);
         let _ = fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn rasterizes_svg_preview_into_rgba_pixels() {
+        let preview = preview_from_svg(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"><rect width="200" height="100" fill="#e63946"/></svg>"##,
+        )
+        .unwrap();
+
+        assert_eq!(preview.size, [312, 156]);
+        assert_eq!(preview.rgba.len(), 312 * 156 * 4);
+        assert!(
+            preview
+                .rgba
+                .chunks_exact(4)
+                .any(|pixel| pixel[0] > 200 && pixel[1] < 100 && pixel[2] < 100 && pixel[3] == 255)
+        );
     }
 }

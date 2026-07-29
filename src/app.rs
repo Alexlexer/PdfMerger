@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     thread,
@@ -39,11 +40,11 @@ pub struct PdfMergerApp {
     active_jobs: usize,
     status: String,
     status_is_error: bool,
+    preview_textures: HashMap<u64, egui::TextureHandle>,
 }
 
 impl PdfMergerApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
-        egui_extras::install_image_loaders(&creation_context.egui_ctx);
         configure_style(&creation_context.egui_ctx);
         let (sender, receiver) = mpsc::channel();
         Self {
@@ -53,6 +54,7 @@ impl PdfMergerApp {
             active_jobs: 0,
             status: "Drop PDFs or images here to begin.".to_owned(),
             status_is_error: false,
+            preview_textures: HashMap::new(),
         }
     }
 
@@ -212,6 +214,7 @@ impl PdfMergerApp {
                             .clicked()
                         {
                             self.workspace.clear();
+                            self.preview_textures.clear();
                             self.set_status("Workspace cleared.", false);
                         }
                     });
@@ -237,7 +240,13 @@ impl PdfMergerApp {
                             .inner_margin(Margin::same(10));
                         let (_zone, dropped) = ui.dnd_drop_zone::<usize, _>(frame, |ui| {
                             ui.dnd_drag_source(Id::new(("page_card", page.id)), index, |ui| {
-                                if let Some(action) = page_card(ui, page, index, pages.len()) {
+                                if let Some(action) = page_card(
+                                    ui,
+                                    page,
+                                    index,
+                                    pages.len(),
+                                    &mut self.preview_textures,
+                                ) {
                                     card_action = Some(action);
                                 }
                             });
@@ -277,6 +286,9 @@ impl PdfMergerApp {
         if let Some(action) = card_action {
             match action {
                 CardAction::Remove(index) => {
+                    if let Some(page) = pages.get(index) {
+                        self.preview_textures.remove(&page.id);
+                    }
                     self.workspace.remove(index);
                     self.set_status("Page removed.", false);
                 }
@@ -421,6 +433,7 @@ fn page_card(
     page: &PageItem,
     index: usize,
     page_count: usize,
+    preview_textures: &mut HashMap<u64, egui::TextureHandle>,
 ) -> Option<CardAction> {
     let mut action = None;
     ui.set_width(CARD_WIDTH);
@@ -442,18 +455,33 @@ fn page_card(
     });
     ui.add_space(5.0);
 
+    let (preview_rect, _) = ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
+    ui.painter().rect_filled(preview_rect, 5.0, Color32::WHITE);
+    ui.painter().rect_stroke(
+        preview_rect,
+        5.0,
+        Stroke::new(1.0, Color32::from_gray(72)),
+        egui::StrokeKind::Inside,
+    );
     if let Some(preview) = &page.preview {
-        let uri = format!("bytes://page-{}.{}", page.id, preview.extension);
-        ui.add(
-            egui::Image::from_bytes(uri, preview.bytes.clone())
-                .fit_to_exact_size(PREVIEW_SIZE)
-                .corner_radius(5),
-        );
+        let texture = preview_textures.entry(page.id).or_insert_with(|| {
+            let image =
+                egui::ColorImage::from_rgba_unmultiplied(preview.size, preview.rgba.as_ref());
+            ui.ctx().load_texture(
+                format!("page-preview-{}", page.id),
+                image,
+                egui::TextureOptions::LINEAR,
+            )
+        });
+        let source_size = Vec2::new(preview.size[0] as f32, preview.size[1] as f32);
+        let scale = (PREVIEW_SIZE.x / source_size.x).min(PREVIEW_SIZE.y / source_size.y);
+        let image_rect = egui::Rect::from_center_size(preview_rect.center(), source_size * scale);
+        egui::Image::from_texture(&*texture)
+            .fit_to_exact_size(image_rect.size())
+            .paint_at(ui, image_rect);
     } else {
-        let (rect, _) = ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
-        ui.painter().rect_filled(rect, 5.0, Color32::from_gray(235));
         ui.painter().text(
-            rect.center(),
+            preview_rect.center(),
             egui::Align2::CENTER_CENTER,
             format!("PDF\nPAGE {}", index + 1),
             egui::FontId::proportional(19.0),
