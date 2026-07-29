@@ -2857,6 +2857,8 @@ dependencies = [
  "lopdf",
  "printpdf",
  "rfd",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
