@@ -16,8 +16,11 @@ use pdf_merger::{
 };
 
 const ACCENT: Color32 = Color32::from_rgb(94, 106, 210);
-const CARD_WIDTH: f32 = 188.0;
-const PREVIEW_SIZE: Vec2 = Vec2::new(156.0, 208.0);
+const CARD_WIDTH: f32 = 166.0;
+const CARD_MARGIN: f32 = 10.0;
+const CARD_SPACING: f32 = 10.0;
+const CARD_OUTER_WIDTH: f32 = CARD_WIDTH + CARD_MARGIN * 2.0;
+const PREVIEW_SIZE: Vec2 = Vec2::new(CARD_WIDTH, 221.0);
 
 enum AppMessage {
     ImportFinished {
@@ -246,51 +249,73 @@ impl PdfMergerApp {
             .id_salt("page_strip")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(10.0, 10.0);
-                    for (index, page) in pages.iter().enumerate() {
-                        let frame = Frame::new()
-                            .fill(Color32::from_rgb(35, 39, 49))
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(57, 63, 78)))
-                            .corner_radius(CornerRadius::same(12))
-                            .inner_margin(Margin::same(10));
-                        let (_zone, dropped) = ui.dnd_drop_zone::<usize, _>(frame, |ui| {
-                            ui.dnd_drag_source(Id::new(("page_card", page.id)), index, |ui| {
-                                if let Some(action) = page_card(
-                                    ui,
-                                    page,
-                                    index,
-                                    pages.len(),
-                                    &mut self.preview_textures,
-                                ) {
-                                    card_action = Some(action);
-                                }
-                            });
-                        });
-                        if let Some(from) = dropped {
-                            move_request = Some((*from, index));
-                        }
-                    }
+                let available_width = ui.available_width();
+                let columns = ((available_width + CARD_SPACING) / (CARD_OUTER_WIDTH + CARD_SPACING))
+                    .floor()
+                    .max(1.0) as usize;
 
-                    let (_end_zone, dropped) = ui.dnd_drop_zone::<usize, _>(
-                        Frame::new()
-                            .fill(Color32::from_rgb(28, 31, 40))
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(61, 66, 80)))
-                            .corner_radius(10)
-                            .inner_margin(Margin::same(8)),
-                        |ui| {
-                            ui.set_min_size(Vec2::new(CARD_WIDTH, 64.0));
-                            ui.centered_and_justified(|ui| {
-                                ui.label(
-                                    RichText::new("Drop at end").color(Color32::from_gray(130)),
-                                );
+                egui::Grid::new("page_grid")
+                    .min_col_width(CARD_OUTER_WIDTH)
+                    .max_col_width(CARD_OUTER_WIDTH)
+                    .spacing(Vec2::splat(CARD_SPACING))
+                    .show(ui, |ui| {
+                        let mut cell = 0;
+                        for (index, page) in pages.iter().enumerate() {
+                            let frame = Frame::new()
+                                .fill(Color32::from_rgb(35, 39, 49))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(57, 63, 78)))
+                                .corner_radius(CornerRadius::same(12))
+                                .inner_margin(Margin::same(CARD_MARGIN as i8));
+                            let (_zone, dropped) = ui.dnd_drop_zone::<usize, _>(frame, |ui| {
+                                ui.set_min_width(CARD_WIDTH);
+                                ui.set_max_width(CARD_WIDTH);
+                                ui.dnd_drag_source(Id::new(("page_card", page.id)), index, |ui| {
+                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                        ui.set_width(CARD_WIDTH);
+                                        if let Some(action) = page_card(
+                                            ui,
+                                            page,
+                                            index,
+                                            pages.len(),
+                                            &mut self.preview_textures,
+                                        ) {
+                                            card_action = Some(action);
+                                        }
+                                    });
+                                });
                             });
-                        },
-                    );
-                    if let Some(from) = dropped {
-                        move_request = Some((*from, pages.len()));
-                    }
-                });
+                            if let Some(from) = dropped {
+                                move_request = Some((*from, index));
+                            }
+                            cell += 1;
+                            if cell % columns == 0 {
+                                ui.end_row();
+                            }
+                        }
+
+                        let (_end_zone, dropped) = ui.dnd_drop_zone::<usize, _>(
+                            Frame::new()
+                                .fill(Color32::from_rgb(28, 31, 40))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(61, 66, 80)))
+                                .corner_radius(10)
+                                .inner_margin(Margin::same(8)),
+                            |ui| {
+                                ui.set_min_size(Vec2::new(CARD_WIDTH, 64.0));
+                                ui.set_max_width(CARD_WIDTH);
+                                ui.centered_and_justified(|ui| {
+                                    ui.label(
+                                        RichText::new("Drop at end").color(Color32::from_gray(130)),
+                                    );
+                                });
+                            },
+                        );
+                        if let Some(from) = dropped {
+                            move_request = Some((*from, pages.len()));
+                        }
+                        if (cell + 1) % columns != 0 {
+                            ui.end_row();
+                        }
+                    });
             });
 
         if let Some((from, to)) = move_request {
@@ -451,6 +476,8 @@ fn page_card(
     preview_textures: &mut HashMap<u64, egui::TextureHandle>,
 ) -> Option<CardAction> {
     let mut action = None;
+    ui.set_min_width(CARD_WIDTH);
+    ui.set_max_width(CARD_WIDTH);
     ui.set_width(CARD_WIDTH);
     ui.horizontal(|ui| {
         ui.label(
@@ -505,36 +532,42 @@ fn page_card(
     }
 
     ui.add_space(7.0);
-    ui.label(
-        RichText::new(&page.title)
-            .strong()
-            .color(Color32::from_gray(225)),
+    ui.add(
+        egui::Label::new(
+            RichText::new(&page.title)
+                .strong()
+                .color(Color32::from_gray(225)),
+        )
+        .truncate(),
     )
     .on_hover_text(page.source.path().display().to_string());
-    ui.label(
-        RichText::new(&page.subtitle)
-            .small()
-            .color(Color32::from_gray(135)),
+    ui.add(
+        egui::Label::new(
+            RichText::new(&page.subtitle)
+                .small()
+                .color(Color32::from_gray(135)),
+        )
+        .truncate(),
     );
     ui.add_space(5.0);
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(index > 0, egui::Button::new("←"))
-            .on_hover_text("Move left")
+            .add_enabled(index > 0, egui::Button::new("<"))
+            .on_hover_text("Move page backward")
             .clicked()
         {
             action = Some(CardAction::MoveLeft(index));
         }
         if ui
-            .add_enabled(index + 1 < page_count, egui::Button::new("→"))
-            .on_hover_text("Move right")
+            .add_enabled(index + 1 < page_count, egui::Button::new(">"))
+            .on_hover_text("Move page forward")
             .clicked()
         {
             action = Some(CardAction::MoveRight(index));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             ui.label(
-                RichText::new("⋮⋮ drag")
+                RichText::new(":: drag")
                     .small()
                     .color(Color32::from_gray(115)),
             );
