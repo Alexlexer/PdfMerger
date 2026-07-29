@@ -1,0 +1,43 @@
+[package]
+name = "pdf-merger"
+version = "0.1.0"
+edition = "2024"
+description = "A native desktop PDF merger and image-to-PDF arranger"
+license = "MIT"
+repository = "https://github.com/Alexlexer/PdfMerger"
+
+[dependencies]
+anyhow = "1.0"
+eframe = { version = "0.35", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "wayland",
+    "wgpu",
+    "x11",
+] }
+egui_extras = { version = "0.35", default-features = false, features = [
+    "image",
+    "svg_text",
+] }
+image = { version = "0.25", default-features = false, features = [
+    "bmp",
+    "gif",
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+] }
+lopdf = "0.44"
+printpdf = { version = "0.12", default-features = false, features = [
+    "bmp",
+    "gif",
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+] }
+rfd = "0.17"
+
+[profile.release]
+lto = "thin"
+strip = true

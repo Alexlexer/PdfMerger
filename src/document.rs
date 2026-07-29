@@ -1,0 +1,365 @@
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
+
+use anyhow::{Context, Result, anyhow, bail};
+use lopdf::{Document, Object, dictionary};
+use printpdf::{
+    Mm, Op, PdfDocument, PdfPage, PdfParseOptions, PdfSaveOptions, PdfToSvgOptions, Pt, RawImage,
+    XObjectTransform,
+};
+
+use crate::model::{PageDraft, PageItem, PageSource, PreviewData};
+
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif", "tif", "tiff"];
+
+#[derive(Debug)]
+pub struct ExportReport {
+    pub path: PathBuf,
+    pub page_count: usize,
+    pub warnings: Vec<String>,
+}
+
+pub fn is_supported(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase);
+
+    matches!(extension.as_deref(), Some("pdf"))
+        || extension
+            .as_deref()
+            .is_some_and(|value| IMAGE_EXTENSIONS.contains(&value))
+}
+
+pub fn import_file(path: &Path) -> Result<Vec<PageDraft>> {
+    if !path.is_file() {
+        bail!("{} is not a file", path.display());
+    }
+
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    if extension == "pdf" {
+        import_pdf(path)
+    } else if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
+        import_image(path, &extension)
+    } else {
+        bail!("unsupported file type: {}", path.display());
+    }
+}
+
+fn import_pdf(path: &Path) -> Result<Vec<PageDraft>> {
+    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    let source = Document::load_mem(&bytes)
+        .with_context(|| format!("could not parse {}", path.display()))?;
+    let page_count = source.get_pages().len();
+    if page_count == 0 {
+        bail!("{} contains no pages", path.display());
+    }
+
+    // printpdf is used only to create UI thumbnails. Export uses lopdf so the
+    // original page objects are preserved instead of being rendered again.
+    let mut parse_warnings = Vec::new();
+    let preview_document =
+        PdfDocument::parse(&bytes, &PdfParseOptions::default(), &mut parse_warnings).ok();
+    let file_name = display_name(path);
+
+    Ok((1..=page_count)
+        .map(|index| {
+            let preview = preview_document.as_ref().and_then(|document| {
+                let mut warnings = Vec::new();
+                document
+                    .page_to_svg(index, &PdfToSvgOptions::default(), &mut warnings)
+                    .map(|svg| PreviewData::new(svg.into_bytes(), "svg"))
+            });
+
+            PageDraft {
+                source: PageSource::Pdf {
+                    path: path.to_path_buf(),
+                    page_number: index as u32,
+                },
+                title: file_name.clone(),
+                subtitle: format!("PDF page {index} of {page_count}"),
+                preview,
+            }
+        })
+        .collect())
+}
+
+fn import_image(path: &Path, extension: &str) -> Result<Vec<PageDraft>> {
+    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    let decoded = image::load_from_memory(&bytes)
+        .with_context(|| format!("could not decode image {}", path.display()))?;
+    let subtitle = format!("Image · {} × {} px", decoded.width(), decoded.height());
+    let preview_extension = match extension {
+        "jpg" | "jpeg" => "jpg",
+        "tif" | "tiff" => "tiff",
+        "png" => "png",
+        "webp" => "webp",
+        "bmp" => "bmp",
+        "gif" => "gif",
+        _ => "img",
+    };
+
+    Ok(vec![PageDraft {
+        source: PageSource::Image {
+            path: path.to_path_buf(),
+        },
+        title: display_name(path),
+        subtitle,
+        preview: Some(PreviewData::new(bytes, preview_extension)),
+    }])
+}
+
+pub fn export_pages(pages: &[PageItem], output_path: &Path) -> Result<ExportReport> {
+    if pages.is_empty() {
+        bail!("add at least one page before exporting");
+    }
+
+    let mut pdf_cache: HashMap<PathBuf, Document> = HashMap::new();
+    let mut documents = Vec::with_capacity(pages.len());
+    let mut warnings = Vec::new();
+
+    for page in pages {
+        let document = match &page.source {
+            PageSource::Pdf { path, page_number } => {
+                if !pdf_cache.contains_key(path) {
+                    let loaded = Document::load(path)
+                        .with_context(|| format!("could not load {}", path.display()))?;
+                    pdf_cache.insert(path.clone(), loaded);
+                }
+                let source = pdf_cache
+                    .get(path)
+                    .expect("a PDF inserted into the cache must be available")
+                    .clone();
+                retain_single_page(source, *page_number)?
+            }
+            PageSource::Image { path } => image_as_pdf(path, &mut warnings)?,
+        };
+        documents.push(document);
+    }
+
+    let mut merged = merge_documents(documents)?;
+    merged.compress();
+    merged
+        .save(output_path)
+        .with_context(|| format!("could not save {}", output_path.display()))?;
+
+    Ok(ExportReport {
+        path: output_path.to_path_buf(),
+        page_count: pages.len(),
+        warnings,
+    })
+}
+
+fn retain_single_page(mut document: Document, page_number: u32) -> Result<Document> {
+    let pages = document.get_pages();
+    if !pages.contains_key(&page_number) {
+        bail!("PDF page {page_number} no longer exists");
+    }
+
+    let to_delete = pages
+        .keys()
+        .copied()
+        .filter(|number| *number != page_number)
+        .collect::<Vec<_>>();
+    document.delete_pages(&to_delete);
+    document.prune_objects();
+    Ok(document)
+}
+
+fn image_as_pdf(path: &Path, warning_messages: &mut Vec<String>) -> Result<Document> {
+    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    let mut warnings = Vec::new();
+    let image = RawImage::decode_from_bytes(&bytes, &mut warnings)
+        .map_err(|error| anyhow!("could not decode {}: {error}", path.display()))?;
+
+    let image_width = image.width as f32;
+    let image_height = image.height as f32;
+    let landscape = image_width > image_height;
+    let (page_width_mm, page_height_mm) = if landscape {
+        (297.0_f32, 210.0_f32)
+    } else {
+        (210.0_f32, 297.0_f32)
+    };
+    let margin_mm = 10.0_f32;
+    let points_per_mm = 72.0_f32 / 25.4_f32;
+    let available_width = (page_width_mm - margin_mm * 2.0) * points_per_mm;
+    let available_height = (page_height_mm - margin_mm * 2.0) * points_per_mm;
+    let scale = (available_width / image_width).min(available_height / image_height);
+    let rendered_width = image_width * scale;
+    let rendered_height = image_height * scale;
+    let page_width_points = page_width_mm * points_per_mm;
+    let page_height_points = page_height_mm * points_per_mm;
+
+    let mut pdf = PdfDocument::new(&display_name(path));
+    let image_id = pdf.add_image(&image);
+    let page = PdfPage::new(
+        Mm(page_width_mm),
+        Mm(page_height_mm),
+        vec![Op::UseXobject {
+            id: image_id,
+            transform: XObjectTransform {
+                translate_x: Some(Pt((page_width_points - rendered_width) / 2.0)),
+                translate_y: Some(Pt((page_height_points - rendered_height) / 2.0)),
+                scale_x: Some(scale),
+                scale_y: Some(scale),
+                dpi: Some(72.0),
+                ..Default::default()
+            },
+        }],
+    );
+    pdf.with_pages(vec![page]);
+
+    let document = pdf.to_lopdf_document(&PdfSaveOptions::default(), &mut warnings);
+    if !warnings.is_empty() {
+        warning_messages.push(format!(
+            "{} generated {} PDF warning(s)",
+            path.display(),
+            warnings.len()
+        ));
+    }
+    Ok(document)
+}
+
+fn merge_documents(documents: Vec<Document>) -> Result<Document> {
+    if documents.is_empty() {
+        bail!("there are no documents to merge");
+    }
+
+    let mut output = Document::with_version("1.7");
+    let mut next_object_id = 1;
+    let mut page_tree_roots = Vec::with_capacity(documents.len());
+    let mut total_pages = 0_u32;
+
+    for mut source in documents {
+        source.renumber_objects_with(next_object_id);
+        next_object_id = source.max_id + 1;
+        total_pages += source.get_pages().len() as u32;
+
+        let catalog_id = source
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .context("source PDF has no catalog")?;
+        let pages_id = source
+            .get_dictionary(catalog_id)
+            .and_then(|catalog| catalog.get(b"Pages"))
+            .and_then(Object::as_reference)
+            .context("source PDF has no page tree")?;
+        page_tree_roots.push(pages_id);
+
+        output.objects.extend(source.objects);
+    }
+
+    output.max_id = next_object_id.saturating_sub(1);
+    let pages_id = output.new_object_id();
+    for root_id in &page_tree_roots {
+        let root = output
+            .get_dictionary_mut(*root_id)
+            .context("could not update a source page tree")?;
+        root.set("Parent", pages_id);
+    }
+
+    output.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => page_tree_roots.into_iter().map(Object::Reference).collect::<Vec<_>>(),
+            "Count" => total_pages,
+        }),
+    );
+    let catalog_id = output.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+        "PageLayout" => "OneColumn",
+    });
+    output.trailer.set("Root", catalog_id);
+    output.prune_objects();
+    output.renumber_objects();
+    Ok(output)
+}
+
+fn display_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Untitled")
+        .to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_supported_files_case_insensitively() {
+        assert!(is_supported(Path::new("document.PDF")));
+        assert!(is_supported(Path::new("photo.JpEg")));
+        assert!(!is_supported(Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn merges_documents_without_flattening_page_trees() {
+        fn blank_document() -> Document {
+            let mut document = Document::with_version("1.5");
+            let pages_id = document.new_object_id();
+            let page_id = document.add_object(dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_id,
+                "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()],
+            });
+            document.objects.insert(
+                pages_id,
+                Object::Dictionary(dictionary! {
+                    "Type" => "Pages",
+                    "Kids" => vec![Object::Reference(page_id)],
+                    "Count" => 1,
+                }),
+            );
+            let catalog_id = document.add_object(dictionary! {
+                "Type" => "Catalog",
+                "Pages" => pages_id,
+            });
+            document.trailer.set("Root", catalog_id);
+            document
+        }
+
+        let merged = merge_documents(vec![blank_document(), blank_document()]).unwrap();
+        assert_eq!(merged.get_pages().len(), 2);
+    }
+
+    #[test]
+    fn converts_an_image_into_a_readable_pdf() {
+        use crate::model::Workspace;
+        use image::{Rgb, RgbImage};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = format!("pdf-merger-test-{}-{nonce}", std::process::id());
+        let image_path = std::env::temp_dir().join(format!("{base}.png"));
+        let output_path = std::env::temp_dir().join(format!("{base}.pdf"));
+
+        RgbImage::from_pixel(32, 16, Rgb([94, 106, 210]))
+            .save(&image_path)
+            .unwrap();
+        let drafts = import_file(&image_path).unwrap();
+        let mut workspace = Workspace::default();
+        workspace.append(drafts);
+
+        let report = export_pages(workspace.pages(), &output_path).unwrap();
+        assert_eq!(report.page_count, 1);
+        assert_eq!(Document::load(&output_path).unwrap().get_pages().len(), 1);
+
+        let _ = fs::remove_file(image_path);
+        let _ = fs::remove_file(output_path);
+    }
+}
