@@ -552,25 +552,27 @@ fn page_card(
     ui.add_space(5.0);
     ui.horizontal(|ui| {
         if ui
-            .add_enabled(index > 0, egui::Button::new("<"))
+            .add_enabled(
+                index > 0,
+                egui::Button::new(RichText::new("Back").strong()).min_size(Vec2::new(48.0, 28.0)),
+            )
             .on_hover_text("Move page backward")
             .clicked()
         {
             action = Some(CardAction::MoveLeft(index));
         }
         if ui
-            .add_enabled(index + 1 < page_count, egui::Button::new(">"))
+            .add_enabled(
+                index + 1 < page_count,
+                egui::Button::new(RichText::new("Next").strong()).min_size(Vec2::new(48.0, 28.0)),
+            )
             .on_hover_text("Move page forward")
             .clicked()
         {
             action = Some(CardAction::MoveRight(index));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(
-                RichText::new(":: drag")
-                    .small()
-                    .color(Color32::from_gray(115)),
-            );
+            ui.label(RichText::new("Drag").small().color(Color32::from_gray(135)));
         });
     });
     action
