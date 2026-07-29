@@ -269,19 +269,17 @@ impl PdfMergerApp {
                             let (_zone, dropped) = ui.dnd_drop_zone::<usize, _>(frame, |ui| {
                                 ui.set_min_width(CARD_WIDTH);
                                 ui.set_max_width(CARD_WIDTH);
-                                ui.dnd_drag_source(Id::new(("page_card", page.id)), index, |ui| {
-                                    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-                                        ui.set_width(CARD_WIDTH);
-                                        if let Some(action) = page_card(
-                                            ui,
-                                            page,
-                                            index,
-                                            pages.len(),
-                                            &mut self.preview_textures,
-                                        ) {
-                                            card_action = Some(action);
-                                        }
-                                    });
+                                ui.with_layout(Layout::top_down(Align::Min), |ui| {
+                                    ui.set_width(CARD_WIDTH);
+                                    if let Some(action) = page_card(
+                                        ui,
+                                        page,
+                                        index,
+                                        pages.len(),
+                                        &mut self.preview_textures,
+                                    ) {
+                                        card_action = Some(action);
+                                    }
                                 });
                             });
                             if let Some(from) = dropped {
@@ -572,7 +570,18 @@ fn page_card(
             action = Some(CardAction::MoveRight(index));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new("Drag").small().color(Color32::from_gray(135)));
+            let drag_handle = ui.add(
+                egui::Label::new(
+                    RichText::new("Drag")
+                        .small()
+                        .strong()
+                        .color(Color32::from_gray(155)),
+                )
+                .sense(egui::Sense::drag()),
+            );
+            drag_handle
+                .on_hover_text("Drag to reorder this page")
+                .dnd_set_drag_payload(index);
         });
     });
     action
