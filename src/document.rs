@@ -6,10 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use lopdf::{Document, Object, dictionary};
-use printpdf::{
-    Mm, Op, PdfDocument, PdfPage, PdfParseOptions, PdfSaveOptions, PdfToSvgOptions, Pt, RawImage,
-    XObjectTransform,
-};
+use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt, RawImage, XObjectTransform};
 
 use crate::model::{PageDraft, PageItem, PageSource, PreviewData};
 
@@ -65,21 +62,32 @@ fn import_pdf(path: &Path) -> Result<Vec<PageDraft>> {
         bail!("{} contains no pages", path.display());
     }
 
-    // printpdf is used only to create UI thumbnails. Export uses lopdf so the
-    // original page objects are preserved instead of being rendered again.
-    let mut parse_warnings = Vec::new();
-    let preview_document =
-        PdfDocument::parse(&bytes, &PdfParseOptions::default(), &mut parse_warnings).ok();
+    // Hayro rasterizes the original PDF directly. It is pure Rust and embeds
+    // its standard fonts/CMaps, so previews remain native and offline.
+    let preview_pdf = hayro::hayro_syntax::Pdf::new(bytes).ok();
+    let preview_cache = hayro::RenderCache::new();
+    let interpreter_settings = hayro::hayro_interpret::InterpreterSettings::default();
+    let render_settings = hayro::RenderSettings {
+        x_scale: 0.5,
+        y_scale: 0.5,
+        ..Default::default()
+    };
     let file_name = display_name(path);
 
     Ok((1..=page_count)
         .map(|index| {
-            let preview = preview_document.as_ref().and_then(|document| {
-                let mut warnings = Vec::new();
-                document
-                    .page_to_svg(index, &PdfToSvgOptions::default(), &mut warnings)
-                    .and_then(|svg| preview_from_svg(&svg).ok())
-            });
+            let preview = preview_pdf
+                .as_ref()
+                .and_then(|pdf| pdf.pages().get(index - 1))
+                .and_then(|page| {
+                    preview_from_pdf_page(
+                        page,
+                        &preview_cache,
+                        &interpreter_settings,
+                        &render_settings,
+                    )
+                    .ok()
+                });
 
             PageDraft {
                 source: PageSource::Pdf {
@@ -126,34 +134,17 @@ fn preview_from_image(image: image::DynamicImage) -> PreviewData {
     )
 }
 
-fn preview_from_svg(svg: &str) -> Result<PreviewData> {
-    let mut options = resvg::usvg::Options::default();
-    options.fontdb_mut().load_system_fonts();
-    let tree = resvg::usvg::Tree::from_str(svg, &options)
-        .map_err(|error| anyhow!("could not parse generated preview SVG: {error}"))?;
-    let source_size = tree.size();
-    let scale = (PREVIEW_MAX_WIDTH as f32 / source_size.width())
-        .min(PREVIEW_MAX_HEIGHT as f32 / source_size.height());
-    let width = (source_size.width() * scale)
-        .round()
-        .clamp(1.0, PREVIEW_MAX_WIDTH as f32) as u32;
-    let height = (source_size.height() * scale)
-        .round()
-        .clamp(1.0, PREVIEW_MAX_HEIGHT as f32) as u32;
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| anyhow!("could not allocate PDF preview bitmap"))?;
-    pixmap.fill(resvg::tiny_skia::Color::WHITE);
-    resvg::render(
-        &tree,
-        resvg::tiny_skia::Transform::from_scale(scale, scale),
-        &mut pixmap.as_mut(),
-    );
-
-    Ok(PreviewData::new(
-        width as usize,
-        height as usize,
-        pixmap.data().to_vec(),
-    ))
+fn preview_from_pdf_page<'a>(
+    page: &'a hayro::hayro_syntax::page::Page<'a>,
+    cache: &hayro::RenderCache<'a>,
+    interpreter_settings: &hayro::hayro_interpret::InterpreterSettings,
+    render_settings: &hayro::RenderSettings,
+) -> Result<PreviewData> {
+    let png = hayro::render(page, cache, interpreter_settings, render_settings)
+        .into_png()
+        .map_err(|error| anyhow!("could not encode rendered PDF preview: {error}"))?;
+    let image = image::load_from_memory(&png).context("could not decode rendered PDF preview")?;
+    Ok(preview_from_image(image))
 }
 
 pub fn export_pages(pages: &[PageItem], output_path: &Path) -> Result<ExportReport> {
@@ -408,25 +399,11 @@ mod tests {
             pdf_preview.rgba.len(),
             pdf_preview.size[0] * pdf_preview.size[1] * 4
         );
+        assert!(pdf_preview.rgba.chunks_exact(4).any(|pixel| {
+            pixel[0] > 70 && pixel[0] < 120 && pixel[1] > 80 && pixel[1] < 130 && pixel[2] > 180
+        }));
 
         let _ = fs::remove_file(image_path);
         let _ = fs::remove_file(output_path);
-    }
-
-    #[test]
-    fn rasterizes_svg_preview_into_rgba_pixels() {
-        let preview = preview_from_svg(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"><rect width="200" height="100" fill="#e63946"/></svg>"##,
-        )
-        .unwrap();
-
-        assert_eq!(preview.size, [312, 156]);
-        assert_eq!(preview.rgba.len(), 312 * 156 * 4);
-        assert!(
-            preview
-                .rgba
-                .chunks_exact(4)
-                .any(|pixel| pixel[0] > 200 && pixel[1] < 100 && pixel[2] < 100 && pixel[3] == 255)
-        );
     }
 }
