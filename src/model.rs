@@ -16,15 +16,16 @@ impl PageSource {
 
 #[derive(Clone, Debug)]
 pub struct PreviewData {
-    pub bytes: Arc<[u8]>,
-    pub extension: &'static str,
+    pub size: [usize; 2],
+    pub rgba: Arc<[u8]>,
 }
 
 impl PreviewData {
-    pub fn new(bytes: Vec<u8>, extension: &'static str) -> Self {
+    pub fn new(width: usize, height: usize, rgba: Vec<u8>) -> Self {
+        debug_assert_eq!(rgba.len(), width * height * 4);
         Self {
-            bytes: bytes.into(),
-            extension,
+            size: [width, height],
+            rgba: rgba.into(),
         }
     }
 }
