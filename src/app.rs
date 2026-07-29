@@ -570,18 +570,15 @@ fn page_card(
             action = Some(CardAction::MoveRight(index));
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let drag_handle = ui.add(
-                egui::Label::new(
+            ui.dnd_drag_source(Id::new(("page_drag", page.id)), index, |ui| {
+                ui.label(
                     RichText::new("Drag")
                         .small()
                         .strong()
                         .color(Color32::from_gray(155)),
                 )
-                .sense(egui::Sense::drag()),
-            );
-            drag_handle
-                .on_hover_text("Drag to reorder this page")
-                .dnd_set_drag_payload(index);
+                .on_hover_text("Drag to reorder this page");
+            });
         });
     });
     action
