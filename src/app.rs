@@ -495,58 +495,62 @@ fn page_card(
     });
     ui.add_space(5.0);
 
-    let (preview_rect, _) = ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
-    ui.painter().rect_filled(preview_rect, 5.0, Color32::WHITE);
-    ui.painter().rect_stroke(
-        preview_rect,
-        5.0,
-        Stroke::new(1.0, Color32::from_gray(72)),
-        egui::StrokeKind::Inside,
-    );
-    if let Some(preview) = &page.preview {
-        let texture = preview_textures.entry(page.id).or_insert_with(|| {
-            let image =
-                egui::ColorImage::from_rgba_unmultiplied(preview.size, preview.rgba.as_ref());
-            ui.ctx().load_texture(
-                format!("page-preview-{}", page.id),
-                image,
-                egui::TextureOptions::LINEAR,
-            )
-        });
-        let source_size = Vec2::new(preview.size[0] as f32, preview.size[1] as f32);
-        let scale = (PREVIEW_SIZE.x / source_size.x).min(PREVIEW_SIZE.y / source_size.y);
-        let image_rect = egui::Rect::from_center_size(preview_rect.center(), source_size * scale);
-        egui::Image::from_texture(&*texture)
-            .fit_to_exact_size(image_rect.size())
-            .paint_at(ui, image_rect);
-    } else {
-        ui.painter().text(
-            preview_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            format!("PDF\nPAGE {}", index + 1),
-            egui::FontId::proportional(19.0),
-            Color32::from_gray(60),
+    ui.dnd_drag_source(Id::new(("page_drag", page.id)), index, |ui| {
+        ui.set_width(CARD_WIDTH);
+        let (preview_rect, _) = ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
+        ui.painter().rect_filled(preview_rect, 5.0, Color32::WHITE);
+        ui.painter().rect_stroke(
+            preview_rect,
+            5.0,
+            Stroke::new(1.0, Color32::from_gray(72)),
+            egui::StrokeKind::Inside,
         );
-    }
+        if let Some(preview) = &page.preview {
+            let texture = preview_textures.entry(page.id).or_insert_with(|| {
+                let image =
+                    egui::ColorImage::from_rgba_unmultiplied(preview.size, preview.rgba.as_ref());
+                ui.ctx().load_texture(
+                    format!("page-preview-{}", page.id),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                )
+            });
+            let source_size = Vec2::new(preview.size[0] as f32, preview.size[1] as f32);
+            let scale = (PREVIEW_SIZE.x / source_size.x).min(PREVIEW_SIZE.y / source_size.y);
+            let image_rect =
+                egui::Rect::from_center_size(preview_rect.center(), source_size * scale);
+            egui::Image::from_texture(&*texture)
+                .fit_to_exact_size(image_rect.size())
+                .paint_at(ui, image_rect);
+        } else {
+            ui.painter().text(
+                preview_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                format!("PDF\nPAGE {}", index + 1),
+                egui::FontId::proportional(19.0),
+                Color32::from_gray(60),
+            );
+        }
 
-    ui.add_space(7.0);
-    ui.add(
-        egui::Label::new(
-            RichText::new(&page.title)
-                .strong()
-                .color(Color32::from_gray(225)),
+        ui.add_space(7.0);
+        ui.add(
+            egui::Label::new(
+                RichText::new(&page.title)
+                    .strong()
+                    .color(Color32::from_gray(225)),
+            )
+            .truncate(),
         )
-        .truncate(),
-    )
-    .on_hover_text(page.source.path().display().to_string());
-    ui.add(
-        egui::Label::new(
-            RichText::new(&page.subtitle)
-                .small()
-                .color(Color32::from_gray(135)),
-        )
-        .truncate(),
-    );
+        .on_hover_text(page.source.path().display().to_string());
+        ui.add(
+            egui::Label::new(
+                RichText::new(&page.subtitle)
+                    .small()
+                    .color(Color32::from_gray(135)),
+            )
+            .truncate(),
+        );
+    });
     ui.add_space(5.0);
     ui.horizontal(|ui| {
         if ui
@@ -569,17 +573,6 @@ fn page_card(
         {
             action = Some(CardAction::MoveRight(index));
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.dnd_drag_source(Id::new(("page_drag", page.id)), index, |ui| {
-                ui.label(
-                    RichText::new("Drag")
-                        .small()
-                        .strong()
-                        .color(Color32::from_gray(155)),
-                )
-                .on_hover_text("Drag to reorder this page");
-            });
-        });
     });
     action
 }
