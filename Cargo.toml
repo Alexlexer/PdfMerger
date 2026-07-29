@@ -15,6 +15,7 @@ eframe = { version = "0.35", default-features = false, features = [
     "wgpu",
     "x11",
 ] }
+hayro = "0.7.1"
 image = { version = "0.25", default-features = false, features = [
     "bmp",
     "gif",
@@ -32,7 +33,6 @@ printpdf = { version = "0.12", default-features = false, features = [
     "tiff",
     "webp",
 ] }
-resvg = "0.45.1"
 rfd = "0.17"
 
 [profile.release]

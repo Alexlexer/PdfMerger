@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::mpsc::{self, Receiver, Sender},
     thread,
@@ -21,6 +21,7 @@ const PREVIEW_SIZE: Vec2 = Vec2::new(156.0, 208.0);
 
 enum AppMessage {
     ImportFinished {
+        files: usize,
         pages: Vec<PageDraft>,
         errors: Vec<String>,
     },
@@ -62,11 +63,18 @@ impl PdfMergerApp {
         while let Ok(message) = self.receiver.try_recv() {
             self.active_jobs = self.active_jobs.saturating_sub(1);
             match message {
-                AppMessage::ImportFinished { pages, errors } => {
+                AppMessage::ImportFinished {
+                    files,
+                    pages,
+                    errors,
+                } => {
                     let imported = pages.len();
                     self.workspace.append(pages);
                     if errors.is_empty() {
-                        self.set_status(format!("Added {imported} page(s)."), false);
+                        self.set_status(
+                            format!("Added {files} file(s) as {imported} page(s)."),
+                            false,
+                        );
                     } else {
                         self.set_status(errors.join("  "), true);
                     }
@@ -113,17 +121,20 @@ impl PdfMergerApp {
     }
 
     fn start_import(&mut self, paths: Vec<PathBuf>, context: &egui::Context) {
+        let mut unique_paths = HashSet::new();
         let paths = paths
             .into_iter()
             .filter(|path| document::is_supported(path))
+            .filter(|path| unique_paths.insert(path.clone()))
             .collect::<Vec<_>>();
         if paths.is_empty() {
             self.set_status("No supported PDF or image files were selected.", true);
             return;
         }
 
+        let file_count = paths.len();
         self.active_jobs += 1;
-        self.set_status(format!("Importing {} file(s)…", paths.len()), false);
+        self.set_status(format!("Importing {file_count} file(s)…"), false);
         let sender = self.sender.clone();
         let context = context.clone();
         thread::spawn(move || {
@@ -135,7 +146,11 @@ impl PdfMergerApp {
                     Err(error) => errors.push(format!("{}: {error:#}", path.display())),
                 }
             }
-            let _ = sender.send(AppMessage::ImportFinished { pages, errors });
+            let _ = sender.send(AppMessage::ImportFinished {
+                files: file_count,
+                pages,
+                errors,
+            });
             context.request_repaint();
         });
     }
@@ -227,11 +242,12 @@ impl PdfMergerApp {
         let mut card_action = None;
         let mut move_request = None;
 
-        ScrollArea::horizontal()
+        ScrollArea::vertical()
             .id_salt("page_strip")
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                ui.horizontal_top(|ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(10.0, 10.0);
                     for (index, page) in pages.iter().enumerate() {
                         let frame = Frame::new()
                             .fill(Color32::from_rgb(35, 39, 49))
@@ -254,7 +270,6 @@ impl PdfMergerApp {
                         if let Some(from) = dropped {
                             move_request = Some((*from, index));
                         }
-                        ui.add_space(8.0);
                     }
 
                     let (_end_zone, dropped) = ui.dnd_drop_zone::<usize, _>(
@@ -264,10 +279,10 @@ impl PdfMergerApp {
                             .corner_radius(10)
                             .inner_margin(Margin::same(8)),
                         |ui| {
-                            ui.set_min_size(Vec2::new(56.0, 280.0));
+                            ui.set_min_size(Vec2::new(CARD_WIDTH, 64.0));
                             ui.centered_and_justified(|ui| {
                                 ui.label(
-                                    RichText::new("Drop\nhere").color(Color32::from_gray(130)),
+                                    RichText::new("Drop at end").color(Color32::from_gray(130)),
                                 );
                             });
                         },
