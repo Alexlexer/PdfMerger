@@ -155,6 +155,7 @@ impl PdfMergerApp {
     ) {
         let output_count = planned.len();
         let settings = self.export_settings.clone();
+        let passwords = self.passwords_for_worker();
         let sender = self.sender.clone();
         let context = context.clone();
         self.active_jobs += 1;
@@ -175,7 +176,12 @@ impl PdfMergerApp {
                     ));
                     continue;
                 }
-                match document::export_pages_with_settings(&output.pages, &output.path, &settings) {
+                match document::export_pages_with_settings_and_passwords(
+                    &output.pages,
+                    &output.path,
+                    &settings,
+                    &passwords,
+                ) {
                     Ok(export) => {
                         report.warning_count += export.warnings.len();
                         report.written.push(output.path);

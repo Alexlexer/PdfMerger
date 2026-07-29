@@ -16,6 +16,7 @@ mod actions;
 mod editing;
 mod export_dialog;
 mod page_grid;
+mod password_ui;
 mod project_ui;
 mod split_dialog;
 mod style;
@@ -26,6 +27,7 @@ pub(super) enum AppMessage {
         files: usize,
         pages: Vec<PageDraft>,
         errors: Vec<String>,
+        password_requests: Vec<password_ui::PasswordRequest>,
     },
     ExportFinished(Result<ExportReport, String>),
     SplitFinished(SplitReport),
@@ -48,6 +50,8 @@ pub struct PdfMergerApp {
     pub(super) project_ui: project_ui::ProjectUiState,
     pub(super) export_settings: ExportSettings,
     pub(super) export_dialog: export_dialog::ExportDialogState,
+    pub(super) pdf_passwords: HashMap<PathBuf, zeroize::Zeroizing<String>>,
+    pub(super) password_prompt: password_ui::PasswordPromptState,
 }
 
 impl PdfMergerApp {
@@ -72,6 +76,8 @@ impl PdfMergerApp {
             project_ui,
             export_settings,
             export_dialog,
+            pdf_passwords: HashMap::new(),
+            password_prompt: password_ui::PasswordPromptState::default(),
         }
     }
 
@@ -83,12 +89,20 @@ impl PdfMergerApp {
                     files,
                     pages,
                     errors,
+                    password_requests,
                 } => {
                     let imported = pages.len();
+                    let requested = password_requests.len();
                     self.workspace.append(pages);
-                    if errors.is_empty() {
+                    self.enqueue_password_requests(password_requests);
+                    if errors.is_empty() && requested == 0 {
                         self.set_status(
                             format!("Added {files} file(s) as {imported} page(s)."),
+                            false,
+                        );
+                    } else if errors.is_empty() {
+                        self.set_status(
+                            format!("{requested} protected PDF(s) need a password."),
                             false,
                         );
                     } else {
@@ -178,6 +192,7 @@ impl eframe::App for PdfMergerApp {
         self.show_export_dialog(&context);
         self.show_split_dialog(&context);
         self.show_project_dialogs(&context);
+        self.show_password_prompt(&context);
         self.file_drop_overlay(&context);
     }
 }

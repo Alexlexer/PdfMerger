@@ -7,7 +7,10 @@ use pdf_merger::{
     project::{self, PROJECT_EXTENSION, ProjectFile},
 };
 
-use super::{AppMessage, PdfMergerApp};
+use super::{
+    AppMessage, PdfMergerApp,
+    password_ui::{PasswordPurpose, PasswordRequest},
+};
 
 pub(crate) enum ProjectOpenResult {
     Loaded {
@@ -17,6 +20,10 @@ pub(crate) enum ProjectOpenResult {
     Missing {
         project: ProjectFile,
         missing: Vec<PathBuf>,
+    },
+    PasswordRequired {
+        source: PathBuf,
+        error: pdf_merger::document::PdfAccessError,
     },
 }
 
@@ -166,6 +173,14 @@ impl PdfMergerApp {
                     false,
                 );
             }
+            Ok(ProjectOpenResult::PasswordRequired { source, error }) => {
+                self.enqueue_password_requests([PasswordRequest {
+                    path: source,
+                    error,
+                    purpose: PasswordPurpose::OpenProject(path),
+                }]);
+                self.set_status("A protected project source needs a password.", false);
+            }
             Ok(ProjectOpenResult::Missing { project, missing }) => {
                 let count = missing.len();
                 self.project_ui.missing_sources = Some(MissingSourcesState {
@@ -251,7 +266,8 @@ impl PdfMergerApp {
         }
     }
 
-    fn start_project_open(&mut self, path: PathBuf, context: &egui::Context) {
+    pub(super) fn start_project_open(&mut self, path: PathBuf, context: &egui::Context) {
+        let passwords = self.passwords_for_worker();
         let sender = self.sender.clone();
         let context = context.clone();
         let message_path = path.clone();
@@ -264,10 +280,29 @@ impl PdfMergerApp {
                 let missing = project::missing_sources(&path, &project, &replacements);
                 if missing.is_empty() {
                     let settings = project.export.clone();
-                    Ok(ProjectOpenResult::Loaded {
-                        pages: project::materialize_project(&path, &project, &replacements)?,
-                        settings,
-                    })
+                    match project::materialize_project_with_passwords(
+                        &path,
+                        &project,
+                        &replacements,
+                        &passwords,
+                    ) {
+                        Ok(pages) => Ok(ProjectOpenResult::Loaded { pages, settings }),
+                        Err(project::MaterializeFailure::Access {
+                            path,
+                            error:
+                                pdf_merger::document::PdfAccessError::UnsupportedEncryption(error),
+                        }) => Err(anyhow::anyhow!(
+                            "{}: unsupported PDF encryption: {error}",
+                            path.display()
+                        )),
+                        Err(project::MaterializeFailure::Access { path, error }) => {
+                            Ok(ProjectOpenResult::PasswordRequired {
+                                source: path,
+                                error,
+                            })
+                        }
+                        Err(project::MaterializeFailure::Other(error)) => Err(error),
+                    }
                 } else {
                     Ok(ProjectOpenResult::Missing { project, missing })
                 }
@@ -282,6 +317,7 @@ impl PdfMergerApp {
     }
 
     fn start_project_recovery(&mut self, state: MissingSourcesState, context: &egui::Context) {
+        let passwords = self.passwords_for_worker();
         let sender = self.sender.clone();
         let context = context.clone();
         let path = state.project_path.clone();
@@ -290,9 +326,28 @@ impl PdfMergerApp {
         self.set_status("Restoring project sources…", false);
         thread::spawn(move || {
             let settings = state.project.export.clone();
-            let result = project::materialize_project(&path, &state.project, &state.replacements)
-                .map(|pages| ProjectOpenResult::Loaded { pages, settings })
-                .map_err(|error| format!("{error:#}"));
+            let result = match project::materialize_project_with_passwords(
+                &path,
+                &state.project,
+                &state.replacements,
+                &passwords,
+            ) {
+                Ok(pages) => Ok(ProjectOpenResult::Loaded { pages, settings }),
+                Err(project::MaterializeFailure::Access {
+                    path,
+                    error: pdf_merger::document::PdfAccessError::UnsupportedEncryption(error),
+                }) => Err(format!(
+                    "{}: unsupported PDF encryption: {error}",
+                    path.display()
+                )),
+                Err(project::MaterializeFailure::Access { path, error }) => {
+                    Ok(ProjectOpenResult::PasswordRequired {
+                        source: path,
+                        error,
+                    })
+                }
+                Err(project::MaterializeFailure::Other(error)) => Err(format!("{error:#}")),
+            };
             let _ = sender.send(AppMessage::ProjectFinished {
                 path: message_path,
                 result,

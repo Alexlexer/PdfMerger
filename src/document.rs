@@ -6,6 +6,8 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use lopdf::{Document, Object, dictionary};
+use zeroize::Zeroizing;
+
 use printpdf::{
     ImageCompression, ImageOptimizationOptions, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, Pt,
     RawImage, XObjectTransform,
@@ -20,6 +22,46 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif", 
 const PREVIEW_MAX_WIDTH: u32 = 312;
 const PREVIEW_MAX_HEIGHT: u32 = 416;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PdfAccessError {
+    PasswordRequired,
+    IncorrectPassword,
+    OwnerPasswordRequired,
+    UnsupportedEncryption(String),
+}
+
+impl std::fmt::Display for PdfAccessError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PasswordRequired => formatter.write_str("this PDF requires a password"),
+            Self::IncorrectPassword => formatter.write_str("the PDF password is incorrect"),
+            Self::OwnerPasswordRequired => formatter
+                .write_str("the PDF does not allow page assembly; enter its owner password"),
+            Self::UnsupportedEncryption(error) => {
+                write!(formatter, "unsupported PDF encryption: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PdfAccessError {}
+
+#[derive(Debug)]
+pub enum ImportFailure {
+    Access(PdfAccessError),
+    Other(anyhow::Error),
+}
+
+impl std::fmt::Display for ImportFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Access(error) => error.fmt(formatter),
+            Self::Other(error) => write!(formatter, "{error:#}"),
+        }
+    }
+}
+
+impl std::error::Error for ImportFailure {}
 #[derive(Debug)]
 pub struct ExportReport {
     pub path: PathBuf,
@@ -40,8 +82,18 @@ pub fn is_supported(path: &Path) -> bool {
 }
 
 pub fn import_file(path: &Path) -> Result<Vec<PageDraft>> {
+    import_file_with_password(path, None).map_err(|error| anyhow!(error))
+}
+
+pub fn import_file_with_password(
+    path: &Path,
+    password: Option<&str>,
+) -> std::result::Result<Vec<PageDraft>, ImportFailure> {
     if !path.is_file() {
-        bail!("{} is not a file", path.display());
+        return Err(ImportFailure::Other(anyhow!(
+            "{} is not a file",
+            path.display()
+        )));
     }
 
     let extension = path
@@ -51,26 +103,38 @@ pub fn import_file(path: &Path) -> Result<Vec<PageDraft>> {
         .to_ascii_lowercase();
 
     if extension == "pdf" {
-        import_pdf(path)
+        import_pdf(path, password)
     } else if IMAGE_EXTENSIONS.contains(&extension.as_str()) {
-        import_image(path)
+        import_image(path).map_err(ImportFailure::Other)
     } else {
-        bail!("unsupported file type: {}", path.display());
+        Err(ImportFailure::Other(anyhow!(
+            "unsupported file type: {}",
+            path.display()
+        )))
     }
 }
 
-fn import_pdf(path: &Path) -> Result<Vec<PageDraft>> {
-    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
-    let source = Document::load_mem(&bytes)
-        .with_context(|| format!("could not parse {}", path.display()))?;
+fn import_pdf(
+    path: &Path,
+    password: Option<&str>,
+) -> std::result::Result<Vec<PageDraft>, ImportFailure> {
+    let bytes = fs::read(path)
+        .with_context(|| format!("could not read {}", path.display()))
+        .map_err(ImportFailure::Other)?;
+    let mut source = Document::load_mem(&bytes)
+        .with_context(|| format!("could not parse {}", path.display()))
+        .map_err(ImportFailure::Other)?;
+    unlock_pdf(&mut source, password).map_err(ImportFailure::Access)?;
     let page_count = source.get_pages().len();
     if page_count == 0 {
-        bail!("{} contains no pages", path.display());
+        return Err(ImportFailure::Other(anyhow!(
+            "{} contains no pages",
+            path.display()
+        )));
     }
 
-    // Hayro rasterizes the original PDF directly. It is pure Rust and embeds
-    // its standard fonts/CMaps, so previews remain native and offline.
-    let preview_pdf = hayro::hayro_syntax::Pdf::new(bytes).ok();
+    let preview_pdf =
+        hayro::hayro_syntax::Pdf::new_with_password(bytes, password.unwrap_or_default()).ok();
     let preview_cache = hayro::RenderCache::new();
     let interpreter_settings = hayro::hayro_interpret::InterpreterSettings::default();
     let render_settings = hayro::RenderSettings {
@@ -107,7 +171,6 @@ fn import_pdf(path: &Path) -> Result<Vec<PageDraft>> {
         })
         .collect())
 }
-
 fn import_image(path: &Path) -> Result<Vec<PageDraft>> {
     let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
     let decoded = image::load_from_memory(&bytes)
@@ -162,6 +225,15 @@ pub fn export_pages_with_settings(
     output_path: &Path,
     settings: &ExportSettings,
 ) -> Result<ExportReport> {
+    export_pages_with_settings_and_passwords(pages, output_path, settings, &HashMap::new())
+}
+
+pub fn export_pages_with_settings_and_passwords(
+    pages: &[PageItem],
+    output_path: &Path,
+    settings: &ExportSettings,
+    passwords: &HashMap<PathBuf, Zeroizing<String>>,
+) -> Result<ExportReport> {
     if pages.is_empty() {
         bail!("add at least one page before exporting");
     }
@@ -175,8 +247,13 @@ pub fn export_pages_with_settings(
         let document = match &page.source {
             PageSource::Pdf { path, page_number } => {
                 if !pdf_cache.contains_key(path) {
-                    let loaded = Document::load(path)
+                    let mut loaded = Document::load(path)
                         .with_context(|| format!("could not load {}", path.display()))?;
+                    unlock_pdf(
+                        &mut loaded,
+                        passwords.get(path).map(|password| password.as_str()),
+                    )
+                    .map_err(|error| anyhow!("{}: {error}", path.display()))?;
                     pdf_cache.insert(path.clone(), loaded);
                 }
                 let source = pdf_cache
@@ -206,6 +283,48 @@ pub fn export_pages_with_settings(
         page_count: pages.len(),
         warnings,
     })
+}
+fn unlock_pdf(
+    document: &mut Document,
+    password: Option<&str>,
+) -> std::result::Result<(), PdfAccessError> {
+    if !document.is_encrypted() {
+        return Ok(());
+    }
+
+    let password_value = password.unwrap_or_default();
+    let owner_authenticated = document.authenticate_owner_password(password_value).is_ok();
+    let assembly_allowed = document
+        .get_encrypted()
+        .ok()
+        .and_then(|dictionary| dictionary.get(b"P").ok())
+        .and_then(|value| value.as_i64().ok())
+        .is_some_and(|permissions| (permissions as u64 & (1 << 10)) != 0);
+
+    match document.decrypt(password_value) {
+        Ok(()) => {
+            if owner_authenticated || assembly_allowed {
+                Ok(())
+            } else {
+                Err(PdfAccessError::OwnerPasswordRequired)
+            }
+        }
+        Err(lopdf::Error::Decryption(lopdf::encryption::DecryptionError::IncorrectPassword))
+        | Err(lopdf::Error::InvalidPassword) => {
+            if password.is_some() {
+                Err(PdfAccessError::IncorrectPassword)
+            } else {
+                Err(PdfAccessError::PasswordRequired)
+            }
+        }
+        Err(lopdf::Error::Decryption(error)) => {
+            Err(PdfAccessError::UnsupportedEncryption(error.to_string()))
+        }
+        Err(lopdf::Error::UnsupportedSecurityHandler(handler)) => Err(
+            PdfAccessError::UnsupportedEncryption(String::from_utf8_lossy(&handler).into_owned()),
+        ),
+        Err(error) => Err(PdfAccessError::UnsupportedEncryption(error.to_string())),
+    }
 }
 fn retain_single_page(mut document: Document, page_number: u32) -> Result<Document> {
     let pages = document.get_pages();
@@ -450,6 +569,83 @@ fn display_name(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encrypted_blank_document(
+        owner_password: &str,
+        user_password: &str,
+        permissions: lopdf::encryption::Permissions,
+    ) -> Vec<u8> {
+        use lopdf::encryption::{EncryptionState, EncryptionVersion};
+
+        let mut pdf = PdfDocument::new("encrypted test");
+        pdf.with_pages(vec![PdfPage::new(Mm(105.0), Mm(148.0), Vec::new())]);
+        let mut warnings = Vec::new();
+        let mut document = pdf.to_lopdf_document(&PdfSaveOptions::default(), &mut warnings);
+        document.trailer.set(
+            "ID",
+            Object::Array(vec![
+                Object::string_literal("pdf-merger-test-id"),
+                Object::string_literal("pdf-merger-test-id"),
+            ]),
+        );
+        document.max_id = document
+            .objects
+            .keys()
+            .map(|(object_number, _)| *object_number)
+            .max()
+            .unwrap_or_default();
+        let state = EncryptionState::try_from(EncryptionVersion::V2 {
+            document: &document,
+            owner_password,
+            user_password,
+            key_length: 128,
+            permissions,
+        })
+        .unwrap();
+        document.encrypt(&state).unwrap();
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn distinguishes_required_incorrect_and_valid_pdf_passwords() {
+        use lopdf::encryption::Permissions;
+
+        let bytes =
+            encrypted_blank_document("owner-secret", "user-secret", Permissions::ASSEMBLABLE);
+        let mut missing = Document::load_mem(&bytes).unwrap();
+        assert_eq!(
+            unlock_pdf(&mut missing, None),
+            Err(PdfAccessError::PasswordRequired)
+        );
+
+        let mut incorrect = Document::load_mem(&bytes).unwrap();
+        assert_eq!(
+            unlock_pdf(&mut incorrect, Some("wrong")),
+            Err(PdfAccessError::IncorrectPassword)
+        );
+
+        let mut valid = Document::load_mem(&bytes).unwrap();
+        assert_eq!(unlock_pdf(&mut valid, Some("user-secret")), Ok(()));
+        assert!(!valid.is_encrypted());
+        assert!(valid.was_encrypted());
+    }
+
+    #[test]
+    fn requires_owner_password_when_page_assembly_is_forbidden() {
+        use lopdf::encryption::Permissions;
+
+        let bytes = encrypted_blank_document("owner-secret", "user-secret", Permissions::empty());
+        let mut user = Document::load_mem(&bytes).unwrap();
+        assert_eq!(
+            unlock_pdf(&mut user, Some("user-secret")),
+            Err(PdfAccessError::OwnerPasswordRequired)
+        );
+
+        let mut owner = Document::load_mem(&bytes).unwrap();
+        assert_eq!(unlock_pdf(&mut owner, Some("owner-secret")), Ok(()));
+    }
 
     #[test]
     fn calculates_custom_and_original_image_page_sizes() {

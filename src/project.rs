@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::{
     document,
@@ -13,6 +14,31 @@ use crate::{
     model::{PageDraft, PageItem, PageRotation, PageSource},
 };
 
+#[derive(Debug)]
+pub enum MaterializeFailure {
+    Access {
+        path: PathBuf,
+        error: document::PdfAccessError,
+    },
+    Other(anyhow::Error),
+}
+
+impl std::fmt::Display for MaterializeFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Access { path, error } => write!(formatter, "{}: {error}", path.display()),
+            Self::Other(error) => write!(formatter, "{error:#}"),
+        }
+    }
+}
+
+impl std::error::Error for MaterializeFailure {}
+
+impl From<anyhow::Error> for MaterializeFailure {
+    fn from(error: anyhow::Error) -> Self {
+        Self::Other(error)
+    }
+}
 pub const PROJECT_EXTENSION: &str = "pdfmerger";
 const FORMAT_VERSION: u32 = 1;
 const RECENT_LIMIT: usize = 8;
@@ -121,9 +147,22 @@ pub fn materialize_project(
     project: &ProjectFile,
     replacements: &HashMap<PathBuf, PathBuf>,
 ) -> Result<Vec<(PageDraft, PageRotation)>> {
+    materialize_project_with_passwords(project_path, project, replacements, &HashMap::new())
+        .map_err(|error| anyhow::anyhow!(error))
+}
+
+pub fn materialize_project_with_passwords(
+    project_path: &Path,
+    project: &ProjectFile,
+    replacements: &HashMap<PathBuf, PathBuf>,
+    passwords: &HashMap<PathBuf, Zeroizing<String>>,
+) -> std::result::Result<Vec<(PageDraft, PageRotation)>, MaterializeFailure> {
     let missing = missing_sources(project_path, project, replacements);
     if !missing.is_empty() {
-        bail!("{} project source file(s) are missing", missing.len());
+        return Err(MaterializeFailure::Other(anyhow::anyhow!(
+            "{} project source file(s) are missing",
+            missing.len()
+        )));
     }
 
     let mut imports: HashMap<PathBuf, Vec<PageDraft>> = HashMap::new();
@@ -132,7 +171,18 @@ pub fn materialize_project(
         let original = resolve_path(project_path, stored_page.source.path());
         let effective = replacements.get(&original).unwrap_or(&original);
         if !imports.contains_key(effective) {
-            imports.insert(effective.clone(), document::import_file(effective)?);
+            let imported = document::import_file_with_password(
+                effective,
+                passwords.get(effective).map(|password| password.as_str()),
+            )
+            .map_err(|failure| match failure {
+                document::ImportFailure::Access(error) => MaterializeFailure::Access {
+                    path: effective.clone(),
+                    error,
+                },
+                document::ImportFailure::Other(error) => MaterializeFailure::Other(error),
+            })?;
+            imports.insert(effective.clone(), imported);
         }
         let imported = imports
             .get(effective)
@@ -169,7 +219,6 @@ pub fn materialize_project(
     }
     Ok(pages)
 }
-
 pub fn load_recent_projects() -> Vec<PathBuf> {
     let Some(path) = recent_projects_path() else {
         return Vec::new();

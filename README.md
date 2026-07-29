@@ -17,6 +17,7 @@ there is no browser UI, web server, upload, or cloud processing.
 - Split selected pages into individual PDFs, source-file groups, or custom ranges.
 - Save and reopen versioned projects with recent-project access and missing-source recovery.
 - Choose lossless, balanced, or smaller-file export presets with custom image layouts and PDF metadata.
+- Unlock password-protected PDFs for importing, projects, merging, and splitting.
 - Process and save everything locally.
 - Use native open/save dialogs on all supported operating systems.
 
@@ -35,6 +36,10 @@ Images can be placed on automatically oriented A4 pages, sized from their pixel 
 Use the **Project** menu to save the current page order, rotations, and source references as a `.pdfmerger` project. Source paths inside the project directory are stored relatively so the project folder can be moved as a unit.
 
 When opening a project, PdfMerger restores previews in the background. If a source file moved, a recovery dialog lets you locate its replacement. Recent projects are available from the Project menu. An asterisk in the window title marks unsaved changes, and the application prompts before replacing the workspace or exiting.
+
+## Protected PDFs
+
+When a PDF is encrypted, PdfMerger asks for its password and retries the interrupted import or project open. Passwords are retained only in application memory for the current session, are never written to project files, and are cleared from prompt buffers after use. A document that forbids page assembly requires its owner password. Unsupported encryption is reported as an error instead of repeatedly prompting.
 
 ## Splitting PDFs
 

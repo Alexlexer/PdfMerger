@@ -16,9 +16,9 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 
 ## Implementation status
 
-- Completed: architecture baseline, core editing, split/export-selected, project persistence, and export-settings milestones.
-- Next: password-protected PDF support.
-- Later: export optimization, protected PDFs, job progress/cancellation, structure preservation, and release polish.
+- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, and protected-PDF support.
+- Next: job progress, cancellation, and diagnostics.
+- Later: PDF structure preservation and release polish.
 
 ## Delivery milestones
 
