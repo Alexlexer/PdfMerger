@@ -25,7 +25,8 @@ there is no browser UI, web server, upload, or cloud processing.
 
 ## Source document groups
 
-Each imported PDF or image batch is shown in a labeled source card. Groups can be collapsed, selected, rotated, exported, removed, or moved earlier and later as a unit. Pages remain individually selectable and reorderable within their source group, and the flattened group order is always the exact order used for export. Group identity is stored in new projects; older projects are grouped automatically from consecutive source files when opened.
+Each imported PDF or image batch is shown in a labeled source card. Groups can be collapsed, selected, rotated, exported, removed, or moved earlier and later as a unit. Pages remain individually selectable and reorderable. Drag a page anywhere onto another document card to transfer it. To transfer several pages together, select them and drag any selected page onto the destination card. Transferred pages retain their original PDF/image source, and the flattened group order remains the exact order used for export. Group identity is stored in new projects; older projects are grouped automatically from consecutive source files when opened.
+
 ## Export settings
 
 Every full-workspace or selected-page export opens a settings dialog. Split exports reuse the most recently applied settings.

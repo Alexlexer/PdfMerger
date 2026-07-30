@@ -316,6 +316,64 @@ impl Workspace {
             .collect()
     }
 
+    pub fn move_page_to_group(&mut self, from: usize, to: usize, target_group_id: u64) -> bool {
+        if from >= self.pages.len()
+            || to > self.pages.len()
+            || !self
+                .pages
+                .iter()
+                .any(|page| page.group_id == target_group_id)
+        {
+            return false;
+        }
+        if self.pages[from].group_id == target_group_id {
+            return self.move_page(from, to);
+        }
+
+        let adjusted_to = if from < to { to - 1 } else { to };
+        self.record_history();
+        let mut page = self.pages.remove(from);
+        page.group_id = target_group_id;
+        self.pages.insert(adjusted_to.min(self.pages.len()), page);
+        self.normalize_group_runs();
+        true
+    }
+
+    pub fn move_ids_to_group(&mut self, ids: &HashSet<u64>, target_group_id: u64) -> usize {
+        if ids.is_empty()
+            || !self
+                .pages
+                .iter()
+                .any(|page| page.group_id == target_group_id)
+        {
+            return 0;
+        }
+        let mut moving = self
+            .pages
+            .iter()
+            .filter(|page| ids.contains(&page.id) && page.group_id != target_group_id)
+            .cloned()
+            .collect::<Vec<_>>();
+        if moving.is_empty() {
+            return 0;
+        }
+
+        self.record_history();
+        self.pages
+            .retain(|page| !ids.contains(&page.id) || page.group_id == target_group_id);
+        for page in &mut moving {
+            page.group_id = target_group_id;
+        }
+        let insert_at = self
+            .pages
+            .iter()
+            .rposition(|page| page.group_id == target_group_id)
+            .map_or(self.pages.len(), |index| index + 1);
+        let moved = moving.len();
+        self.pages.splice(insert_at..insert_at, moving);
+        self.normalize_group_runs();
+        moved
+    }
     pub fn move_group(&mut self, from: usize, to: usize) -> bool {
         let groups = self.groups();
         if from >= groups.len() || to > groups.len() || from == to {
@@ -581,5 +639,56 @@ mod tests {
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].page_count(), 2);
         assert_eq!(groups[1].page_count(), 1);
+    }
+    #[test]
+    fn transfers_pages_between_groups_without_changing_their_sources() {
+        let mut workspace = Workspace::default();
+        workspace.append([draft("first"), draft("first")]);
+        workspace.append([draft("second"), draft("second")]);
+        let groups = workspace.groups();
+        let target_group = groups[1].id;
+        let transferred_source = workspace.pages()[0].source.clone();
+
+        assert!(workspace.move_page_to_group(0, 4, target_group));
+        let groups = workspace.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].page_count(), 1);
+        assert_eq!(groups[1].page_count(), 3);
+        assert_eq!(workspace.pages()[3].source, transferred_source);
+        assert_eq!(workspace.pages()[3].group_id, target_group);
+
+        assert!(workspace.undo());
+        assert_eq!(
+            workspace
+                .groups()
+                .iter()
+                .map(PageGroup::page_count)
+                .collect::<Vec<_>>(),
+            [2, 2]
+        );
+    }
+
+    #[test]
+    fn transfers_multiple_selected_pages_as_one_undoable_change() {
+        let mut workspace = Workspace::default();
+        workspace.append([draft("first"), draft("first")]);
+        workspace.append([draft("second"), draft("second")]);
+        let groups = workspace.groups();
+        let source_ids = workspace.group_page_ids(groups[0].id);
+        let target_group = groups[1].id;
+
+        assert_eq!(workspace.move_ids_to_group(&source_ids, target_group), 2);
+        assert_eq!(workspace.groups().len(), 1);
+        assert_eq!(workspace.groups()[0].page_count(), 4);
+        assert_eq!(
+            workspace
+                .pages()
+                .iter()
+                .map(|page| page.source.path().to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["second.png", "second.png", "first.png", "first.png"]
+        );
+        assert!(workspace.undo());
+        assert_eq!(workspace.groups().len(), 2);
     }
 }

@@ -76,8 +76,10 @@ impl PdfMergerApp {
                     ui.horizontal(|ui| {
                         ui.heading("Arrange pages");
                         ui.label(
-                            RichText::new("Drag cards to reorder them")
-                                .color(Color32::from_gray(145)),
+                            RichText::new(
+                                "Drag pages to reorder them or move them between document cards",
+                            )
+                            .color(Color32::from_gray(145)),
                         );
                     });
                     ui.add_space(10.0);

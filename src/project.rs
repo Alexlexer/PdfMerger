@@ -426,4 +426,31 @@ mod tests {
 
         fs::remove_dir_all(directory).unwrap();
     }
+    #[test]
+    fn persists_mixed_source_group_membership() {
+        let directory = temp_directory();
+        let first_path = directory.join("first.png");
+        let second_path = directory.join("second.png");
+        let project_path = directory.join("mixed.pdfmerger");
+        RgbImage::from_pixel(8, 4, Rgb([10, 20, 30]))
+            .save(&first_path)
+            .unwrap();
+        RgbImage::from_pixel(8, 4, Rgb([40, 50, 60]))
+            .save(&second_path)
+            .unwrap();
+        let mut workspace = Workspace::default();
+        workspace.append(document::import_file(&first_path).unwrap());
+        workspace.append(document::import_file(&second_path).unwrap());
+        let target_group = workspace.groups()[1].id;
+        assert!(workspace.move_page_to_group(0, 2, target_group));
+
+        save_project(&project_path, workspace.pages(), &ExportSettings::default()).unwrap();
+        let project = read_project(&project_path).unwrap();
+        assert_eq!(project.pages[0].group_id, project.pages[1].group_id);
+        let restored = materialize_project(&project_path, &project, &HashMap::new()).unwrap();
+        assert_eq!(restored[0].2, restored[1].2);
+        assert_ne!(restored[0].0.source.path(), restored[1].0.source.path());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
 }

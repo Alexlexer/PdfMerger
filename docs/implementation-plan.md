@@ -74,6 +74,7 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 
 - Represent each imported source as a labeled, collapsible document group.
 - Preserve exact merge order while supporting whole-group and individual-page reordering.
+- Transfer one or many pages between groups without changing their underlying source references.
 - Add group-level selection, rotation, removal, and export actions.
 - Keep project serialization backward compatible and restore group organization on open.
 

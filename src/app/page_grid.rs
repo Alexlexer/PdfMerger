@@ -49,12 +49,19 @@ impl PdfMergerApp {
                         .map(|page| page.id)
                         .collect::<HashSet<_>>();
                     let all_selected = group_ids.iter().all(|id| self.selected.contains(id));
-                    Frame::new()
-                        .fill(Color32::from_rgb(27, 30, 39))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(53, 59, 73)))
-                        .corner_radius(CornerRadius::same(12))
-                        .inner_margin(Margin::same(12))
-                        .show(ui, |ui| {
+                    let source_count = pages[group.start..group.end]
+                        .iter()
+                        .map(|page| page.source.path())
+                        .collect::<HashSet<_>>()
+                        .len();
+
+                    let (_group_zone, group_drop) = ui.dnd_drop_zone::<usize, _>(
+                        Frame::new()
+                            .fill(Color32::from_rgb(27, 30, 39))
+                            .stroke(Stroke::new(1.0, Color32::from_rgb(53, 59, 73)))
+                            .corner_radius(CornerRadius::same(12))
+                            .inner_margin(Margin::same(12)),
+                        |ui| {
                             if let Some(action) = group_header(
                                 ui,
                                 group,
@@ -62,6 +69,7 @@ impl PdfMergerApp {
                                 groups.len(),
                                 collapsed,
                                 all_selected,
+                                source_count,
                             ) {
                                 group_action = Some(action);
                             }
@@ -120,11 +128,9 @@ impl PdfMergerApp {
                                                         },
                                                     );
                                                 });
-                                            if let Some(from) = dropped
-                                                && *from >= group.start
-                                                && *from < group.end
-                                            {
-                                                move_request = Some((*from, index));
+                                            if let Some(from) = dropped {
+                                                move_request =
+                                                    Some((*from, index, group.id, false));
                                             }
                                             cell += 1;
                                             if cell % columns == 0 {
@@ -132,47 +138,51 @@ impl PdfMergerApp {
                                             }
                                         }
 
-                                        let (_end_zone, dropped) = ui.dnd_drop_zone::<usize, _>(
-                                            Frame::new()
-                                                .fill(Color32::from_rgb(31, 34, 43))
-                                                .stroke(Stroke::new(
-                                                    1.0,
-                                                    Color32::from_rgb(61, 66, 80),
-                                                ))
-                                                .corner_radius(10)
-                                                .inner_margin(Margin::same(8)),
-                                            |ui| {
-                                                ui.set_min_size(Vec2::new(CARD_WIDTH, 64.0));
-                                                ui.set_max_width(CARD_WIDTH);
-                                                ui.centered_and_justified(|ui| {
-                                                    ui.label(
-                                                        RichText::new("Drop at group end")
-                                                            .color(Color32::from_gray(130)),
-                                                    );
-                                                });
-                                            },
-                                        );
-                                        if let Some(from) = dropped
-                                            && *from >= group.start
-                                            && *from < group.end
-                                        {
-                                            move_request = Some((*from, group.end));
-                                        }
-                                        if (cell + 1) % columns != 0 {
+                                        if cell % columns != 0 {
                                             ui.end_row();
                                         }
                                     });
                             }
-                        });
+                        },
+                    );
+                    if let Some(from) = group_drop
+                        && move_request.is_none()
+                    {
+                        move_request = Some((*from, group.end, group.id, true));
+                    }
                     ui.add_space(12.0);
                 }
             });
 
-        if let Some((from, to)) = move_request {
-            self.workspace.move_page(from, to);
-            self.set_status("Page order updated within its source group.", false);
+        if let Some((from, to, target_group_id, dropped_on_group)) = move_request {
+            let dragged = pages.get(from);
+            let transferred = dragged.is_some_and(|page| page.group_id != target_group_id);
+            let move_selection = dropped_on_group
+                && transferred
+                && dragged.is_some_and(|page| self.selected.contains(&page.id));
+            if move_selection {
+                let moved = self
+                    .workspace
+                    .move_ids_to_group(&self.selected, target_group_id);
+                if moved > 0 {
+                    self.retain_existing_selection();
+                    self.set_status(
+                        format!("Transferred {moved} selected page(s) into the document card."),
+                        false,
+                    );
+                }
+            } else if self.workspace.move_page_to_group(from, to, target_group_id) {
+                self.retain_existing_selection();
+                self.set_status(
+                    if transferred {
+                        "Page transferred into the document card."
+                    } else {
+                        "Page order updated within its document card."
+                    },
+                    false,
+                );
+            }
         }
-
         if let Some(action) = card_action {
             match action {
                 CardAction::ToggleSelection(id) => self.toggle_selection(id),
@@ -226,7 +236,7 @@ impl PdfMergerApp {
                     }
                     self.collapsed_groups.remove(&group_id);
                     self.set_status(
-                        format!("Removed source group with {removed} page(s)."),
+                        format!("Removed document group with {removed} page(s)."),
                         false,
                     );
                 }
@@ -234,14 +244,15 @@ impl PdfMergerApp {
                     self.selected = self.workspace.group_page_ids(group_id);
                     self.open_export_dialog(ExportTarget::SelectedPages);
                 }
+
                 GroupAction::MoveUp(index) => {
                     if self.workspace.move_group(index, index - 1) {
-                        self.set_status("Moved source group earlier.", false);
+                        self.set_status("Moved document group earlier.", false);
                     }
                 }
                 GroupAction::MoveDown(index) => {
                     if self.workspace.move_group(index, index + 2) {
-                        self.set_status("Moved source group later.", false);
+                        self.set_status("Moved document group later.", false);
                     }
                 }
             }
@@ -256,6 +267,7 @@ fn group_header(
     group_count: usize,
     collapsed: bool,
     all_selected: bool,
+    source_count: usize,
 ) -> Option<GroupAction> {
     let mut action = None;
     let file_name = group
@@ -281,6 +293,13 @@ fn group_header(
                 .small()
                 .color(Color32::from_gray(145)),
         );
+        if source_count > 1 {
+            ui.label(
+                RichText::new(format!("mixed from {source_count} sources"))
+                    .small()
+                    .color(Color32::from_rgb(232, 181, 92)),
+            );
+        }
         if ui
             .small_button(if all_selected {
                 "Deselect group"
@@ -291,6 +310,7 @@ fn group_header(
         {
             action = Some(GroupAction::ToggleSelection(group.id));
         }
+
         if ui.small_button("Export group").clicked() {
             action = Some(GroupAction::Export(group.id));
         }
