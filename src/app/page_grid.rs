@@ -12,6 +12,10 @@ use super::{
     style::{CARD_MARGIN, CARD_OUTER_WIDTH, CARD_SPACING, CARD_WIDTH, PREVIEW_SIZE},
 };
 
+const DRAG_SCROLL_EDGE: f32 = 72.0;
+const DRAG_SCROLL_OVERSHOOT: f32 = 18.0;
+const DRAG_SCROLL_MAX_SPEED: f32 = 900.0;
+
 enum CardAction {
     ToggleSelection(u64),
     Remove(usize),
@@ -38,7 +42,7 @@ impl PdfMergerApp {
         let mut group_action = None;
         let mut move_request = None;
 
-        ScrollArea::vertical()
+        let scroll_output = ScrollArea::vertical()
             .id_salt("source_group_strip")
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -154,6 +158,36 @@ impl PdfMergerApp {
                 }
             });
 
+        if egui::DragAndDrop::has_payload_of_type::<usize>(ui.ctx())
+            && let Some(pointer) = ui.ctx().pointer_latest_pos()
+        {
+            let viewport = scroll_output.inner_rect;
+            let active_rect = viewport.expand2(Vec2::new(0.0, DRAG_SCROLL_OVERSHOOT));
+            if active_rect.contains(pointer) {
+                let wheel_delta = ui.input(|input| input.smooth_scroll_delta().y);
+                let edge_velocity = drag_edge_scroll_velocity(pointer.y, viewport);
+                let frame_time = ui.input(|input| input.stable_dt).min(0.05);
+                let scroll_delta = -wheel_delta + edge_velocity * frame_time;
+
+                if scroll_delta.abs() > f32::EPSILON {
+                    let maximum_offset =
+                        (scroll_output.content_size.y - viewport.height()).max(0.0);
+                    let mut state = scroll_output.state;
+                    let previous_offset = state.offset.y;
+                    state.offset.y = (state.offset.y + scroll_delta).clamp(0.0, maximum_offset);
+                    if state.offset.y != previous_offset {
+                        state.store(ui.ctx(), scroll_output.id);
+                    }
+                    if wheel_delta.abs() > f32::EPSILON {
+                        ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+                    }
+                    if edge_velocity.abs() > f32::EPSILON {
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+        }
+
         if let Some((from, to, target_group_id, dropped_on_group)) = move_request {
             let dragged = pages.get(from);
             let transferred = dragged.is_some_and(|page| page.group_id != target_group_id);
@@ -258,6 +292,14 @@ impl PdfMergerApp {
             }
         }
     }
+}
+
+fn drag_edge_scroll_velocity(pointer_y: f32, viewport: egui::Rect) -> f32 {
+    let top_strength =
+        ((viewport.top() + DRAG_SCROLL_EDGE - pointer_y) / DRAG_SCROLL_EDGE).clamp(0.0, 1.0);
+    let bottom_strength =
+        ((pointer_y - (viewport.bottom() - DRAG_SCROLL_EDGE)) / DRAG_SCROLL_EDGE).clamp(0.0, 1.0);
+    (bottom_strength - top_strength) * DRAG_SCROLL_MAX_SPEED
 }
 
 fn group_header(
@@ -479,4 +521,26 @@ fn page_card(
         }
     });
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drag_edge_scroll_accelerates_toward_the_viewport_edges() {
+        let viewport = egui::Rect::from_min_max(egui::pos2(0.0, 100.0), egui::pos2(500.0, 700.0));
+
+        assert_eq!(drag_edge_scroll_velocity(400.0, viewport), 0.0);
+        assert!(drag_edge_scroll_velocity(120.0, viewport) < -500.0);
+        assert!(drag_edge_scroll_velocity(680.0, viewport) > 500.0);
+        assert_eq!(
+            drag_edge_scroll_velocity(100.0, viewport),
+            -DRAG_SCROLL_MAX_SPEED
+        );
+        assert_eq!(
+            drag_edge_scroll_velocity(700.0, viewport),
+            DRAG_SCROLL_MAX_SPEED
+        );
+    }
 }
