@@ -1,5 +1,8 @@
 # PdfMerger
 
+[![Build](https://github.com/Alexlexer/PdfMerger/actions/workflows/build.yml/badge.svg)](https://github.com/Alexlexer/PdfMerger/actions/workflows/build.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 PdfMerger is a private, offline desktop application for visually assembling PDF
 documents. It is written in Rust and runs natively on Windows, Linux, and macOS:
 there is no browser UI, web server, upload, or cloud processing.
@@ -76,16 +79,29 @@ Imports, exports, split operations, and project restoration run outside the UI t
 - `Delete`: remove selected pages
 - `Escape`: clear the selection
 
-## Run from source
+## Platform prerequisites
 
-Install the current stable Rust toolchain, then run:
+- **Windows:** Install Rust with the MSVC toolchain and Visual Studio Build Tools with the **Desktop development with C++** workload.
+- **macOS:** Install Rust and the Xcode command-line tools (`xcode-select --install`).
+- **Ubuntu/Debian:** Install Rust and the native desktop development packages used by CI:
 
 ```sh
-cargo run --release
+sudo apt-get update
+sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev
 ```
 
-The first build downloads and compiles the Rust dependencies. No additional PDF
-runtime or web server is required.
+Other Linux distributions need equivalent GTK 3, XKB Common, and Wayland development packages.
+
+## Run from source
+
+After installing the platform prerequisites, run:
+
+```sh
+cargo run --release --locked
+```
+
+The first build downloads and compiles the Rust dependencies. PdfMerger does not
+require a PDF runtime, browser, web server, account, or cloud service.
 
 ## Build
 
@@ -104,6 +120,17 @@ not flattened into screenshots. Safe page-level structures are retained and cata
 structures are rebuilt where possible; unsupported rewrites are reported explicitly. Images are decoded locally, fitted to an A4
 portrait or landscape page with margins, and embedded into the output PDF.
 
+## Community and security
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening
+a pull request and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report
+security issues privately as described in [SECURITY.md](SECURITY.md).
+
+## License
+
+PdfMerger is available under the [MIT License](LICENSE). Third-party dependency
+licenses and notices are provided in [THIRD_PARTY_LICENSES.html](THIRD_PARTY_LICENSES.html)
+and can be regenerated with `cargo about generate about.hbs --locked`.
 ## Supported platforms
 
 GitHub Actions verifies tests and release builds on Windows, Ubuntu, and macOS.

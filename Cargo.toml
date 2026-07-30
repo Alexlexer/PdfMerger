@@ -5,6 +5,10 @@ edition = "2024"
 description = "A native desktop PDF merger and image-to-PDF arranger"
 license = "MIT"
 repository = "https://github.com/Alexlexer/PdfMerger"
+homepage = "https://github.com/Alexlexer/PdfMerger"
+readme = "README.md"
+keywords = ["pdf", "merge", "desktop", "egui", "offline"]
+categories = ["gui", "multimedia::images"]
 
 [dependencies]
 anyhow = "1.0"
