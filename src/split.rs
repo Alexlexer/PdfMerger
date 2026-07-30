@@ -256,6 +256,7 @@ mod tests {
     fn page(id: u64, path: &str) -> PageItem {
         PageItem {
             id,
+            group_id: id,
             source: PageSource::Pdf {
                 path: PathBuf::from(path),
                 page_number: id as u32,

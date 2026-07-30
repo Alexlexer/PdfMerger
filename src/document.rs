@@ -234,16 +234,40 @@ pub fn export_pages_with_settings_and_passwords(
     settings: &ExportSettings,
     passwords: &HashMap<PathBuf, Zeroizing<String>>,
 ) -> Result<ExportReport> {
+    export_pages_with_settings_and_passwords_controlled(
+        pages,
+        output_path,
+        settings,
+        passwords,
+        &mut |_, _| {},
+        &|| false,
+    )
+}
+
+pub fn export_pages_with_settings_and_passwords_controlled(
+    pages: &[PageItem],
+    output_path: &Path,
+    settings: &ExportSettings,
+    passwords: &HashMap<PathBuf, Zeroizing<String>>,
+    progress: &mut dyn FnMut(usize, usize),
+    cancelled: &dyn Fn() -> bool,
+) -> Result<ExportReport> {
     if pages.is_empty() {
         bail!("add at least one page before exporting");
     }
     settings.validate()?;
+    if cancelled() {
+        bail!("export cancelled");
+    }
 
     let mut pdf_cache: HashMap<PathBuf, Document> = HashMap::new();
     let mut documents = Vec::with_capacity(pages.len());
     let mut warnings = Vec::new();
 
-    for page in pages {
+    for (index, page) in pages.iter().enumerate() {
+        if cancelled() {
+            bail!("export cancelled");
+        }
         let document = match &page.source {
             PageSource::Pdf { path, page_number } => {
                 if !pdf_cache.contains_key(path) {
@@ -269,11 +293,18 @@ pub fn export_pages_with_settings_and_passwords(
             }
         };
         documents.push(document);
+        progress(index + 1, pages.len());
     }
 
+    if cancelled() {
+        bail!("export cancelled");
+    }
     let mut merged = merge_documents(documents)?;
     apply_pdf_metadata(&mut merged, settings);
     merged.compress();
+    if cancelled() {
+        bail!("export cancelled");
+    }
     merged
         .save(output_path)
         .with_context(|| format!("could not save {}", output_path.display()))?;
@@ -799,6 +830,53 @@ mod tests {
         let _ = fs::remove_file(output_path);
     }
 
+    #[test]
+    fn controlled_export_reports_progress_and_cleans_up_on_cancellation() {
+        use crate::model::Workspace;
+        use image::{Rgb, RgbImage};
+        use std::{
+            cell::Cell,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = format!("pdf-merger-cancel-test-{}-{nonce}", std::process::id());
+        let first_path = std::env::temp_dir().join(format!("{base}-1.png"));
+        let second_path = std::env::temp_dir().join(format!("{base}-2.png"));
+        let output_path = std::env::temp_dir().join(format!("{base}.pdf"));
+        RgbImage::from_pixel(16, 16, Rgb([20, 40, 60]))
+            .save(&first_path)
+            .unwrap();
+        RgbImage::from_pixel(16, 16, Rgb([80, 100, 120]))
+            .save(&second_path)
+            .unwrap();
+        let mut workspace = Workspace::default();
+        workspace.append(import_file(&first_path).unwrap());
+        workspace.append(import_file(&second_path).unwrap());
+
+        let cancel = Cell::new(false);
+        let mut observed = Vec::new();
+        let result = export_pages_with_settings_and_passwords_controlled(
+            workspace.pages(),
+            &output_path,
+            &ExportSettings::default(),
+            &HashMap::new(),
+            &mut |completed, total| {
+                observed.push((completed, total));
+                cancel.set(true);
+            },
+            &|| cancel.get(),
+        );
+
+        assert!(result.unwrap_err().to_string().contains("cancelled"));
+        assert_eq!(observed, vec![(1, 2)]);
+        assert!(!output_path.exists());
+        let _ = fs::remove_file(first_path);
+        let _ = fs::remove_file(second_path);
+    }
     #[test]
     fn converts_an_image_into_a_readable_pdf() {
         use crate::model::Workspace;

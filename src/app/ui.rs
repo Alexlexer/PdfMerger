@@ -193,6 +193,11 @@ impl PdfMergerApp {
     }
 
     pub(super) fn bottom_bar(&mut self, root_ui: &mut egui::Ui) {
+        let active_job = self.jobs.primary();
+        let active_count = self.jobs.active_count();
+        let has_diagnostics = self.jobs.has_diagnostics();
+        let mut cancel_job = None;
+        let mut open_details = false;
         egui::Panel::bottom("status_bar")
             .frame(
                 Frame::new()
@@ -201,26 +206,69 @@ impl PdfMergerApp {
             )
             .show(root_ui, |ui| {
                 ui.horizontal(|ui| {
-                    let status_color = if self.status_is_error {
-                        Color32::from_rgb(244, 118, 118)
-                    } else {
-                        Color32::from_gray(155)
-                    };
-                    if self.active_jobs > 0 {
+                    if let Some(job) = &active_job {
                         ui.spinner();
+                        ui.label(
+                            RichText::new(format!("{} — {}", job.title, job.phase.label()))
+                                .small()
+                                .color(Color32::from_gray(190)),
+                        );
+                        if job.total > 0 {
+                            let fraction = job.completed as f32 / job.total as f32;
+                            ui.add(
+                                egui::ProgressBar::new(fraction)
+                                    .desired_width(130.0)
+                                    .text(format!("{} / {}", job.completed, job.total)),
+                            );
+                        }
+                        if !job.detail.is_empty() {
+                            ui.label(
+                                RichText::new(&job.detail)
+                                    .small()
+                                    .color(Color32::from_gray(145)),
+                            );
+                        }
+                        if ui
+                            .add_enabled(!job.cancelling, egui::Button::new("Cancel"))
+                            .clicked()
+                        {
+                            cancel_job = Some(job.id);
+                        }
+                    } else {
+                        let status_color = if self.status_is_error {
+                            Color32::from_rgb(244, 118, 118)
+                        } else {
+                            Color32::from_gray(155)
+                        };
+                        ui.label(RichText::new(&self.status).small().color(status_color));
                     }
-                    ui.label(RichText::new(&self.status).small().color(status_color));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             RichText::new(format!("{} page(s)", self.workspace.len()))
                                 .small()
                                 .color(Color32::from_gray(145)),
                         );
+                        if has_diagnostics && ui.small_button("Details").clicked() {
+                            open_details = true;
+                        }
+                        if active_count > 1 {
+                            ui.label(
+                                RichText::new(format!("{active_count} jobs"))
+                                    .small()
+                                    .color(Color32::from_gray(145)),
+                            );
+                        }
                     });
                 });
             });
+        if let Some(job_id) = cancel_job {
+            self.jobs.cancel(job_id);
+            self.set_status("Cancelling background job…", false);
+        }
+        if open_details {
+            self.jobs.open_details();
+        }
     }
-
     pub(super) fn file_drop_overlay(&self, context: &egui::Context) {
         let hovering_files = context.input(|input| !input.raw.hovered_files.is_empty());
         if !hovering_files {

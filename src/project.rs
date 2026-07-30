@@ -54,6 +54,8 @@ pub struct ProjectFile {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectPage {
     pub source: ProjectSource,
+    #[serde(default)]
+    pub group_id: Option<u64>,
     pub rotation_degrees: u16,
 }
 
@@ -80,6 +82,7 @@ pub fn save_project(path: &Path, pages: &[PageItem], settings: &ExportSettings) 
     let pages = pages
         .iter()
         .map(|page| ProjectPage {
+            group_id: Some(page.group_id),
             source: match &page.source {
                 PageSource::Pdf { path, page_number } => ProjectSource::Pdf {
                     path: portable_path(path, project_directory),
@@ -146,7 +149,7 @@ pub fn materialize_project(
     project_path: &Path,
     project: &ProjectFile,
     replacements: &HashMap<PathBuf, PathBuf>,
-) -> Result<Vec<(PageDraft, PageRotation)>> {
+) -> Result<Vec<(PageDraft, PageRotation, Option<u64>)>> {
     materialize_project_with_passwords(project_path, project, replacements, &HashMap::new())
         .map_err(|error| anyhow::anyhow!(error))
 }
@@ -156,7 +159,25 @@ pub fn materialize_project_with_passwords(
     project: &ProjectFile,
     replacements: &HashMap<PathBuf, PathBuf>,
     passwords: &HashMap<PathBuf, Zeroizing<String>>,
-) -> std::result::Result<Vec<(PageDraft, PageRotation)>, MaterializeFailure> {
+) -> std::result::Result<Vec<(PageDraft, PageRotation, Option<u64>)>, MaterializeFailure> {
+    materialize_project_with_passwords_controlled(
+        project_path,
+        project,
+        replacements,
+        passwords,
+        &mut |_, _, _| {},
+        &|| false,
+    )
+}
+
+pub fn materialize_project_with_passwords_controlled(
+    project_path: &Path,
+    project: &ProjectFile,
+    replacements: &HashMap<PathBuf, PathBuf>,
+    passwords: &HashMap<PathBuf, Zeroizing<String>>,
+    progress: &mut dyn FnMut(usize, usize, &Path),
+    cancelled: &dyn Fn() -> bool,
+) -> std::result::Result<Vec<(PageDraft, PageRotation, Option<u64>)>, MaterializeFailure> {
     let missing = missing_sources(project_path, project, replacements);
     if !missing.is_empty() {
         return Err(MaterializeFailure::Other(anyhow::anyhow!(
@@ -165,9 +186,24 @@ pub fn materialize_project_with_passwords(
         )));
     }
 
+    let source_count = project
+        .pages
+        .iter()
+        .map(|page| {
+            let original = resolve_path(project_path, page.source.path());
+            replacements.get(&original).unwrap_or(&original).clone()
+        })
+        .collect::<HashSet<_>>()
+        .len();
+    let mut completed_sources = 0;
     let mut imports: HashMap<PathBuf, Vec<PageDraft>> = HashMap::new();
     let mut pages = Vec::with_capacity(project.pages.len());
     for stored_page in &project.pages {
+        if cancelled() {
+            return Err(MaterializeFailure::Other(anyhow::anyhow!(
+                "project open cancelled"
+            )));
+        }
         let original = resolve_path(project_path, stored_page.source.path());
         let effective = replacements.get(&original).unwrap_or(&original);
         if !imports.contains_key(effective) {
@@ -183,6 +219,8 @@ pub fn materialize_project_with_passwords(
                 document::ImportFailure::Other(error) => MaterializeFailure::Other(error),
             })?;
             imports.insert(effective.clone(), imported);
+            completed_sources += 1;
+            progress(completed_sources, source_count, effective);
         }
         let imported = imports
             .get(effective)
@@ -215,7 +253,11 @@ pub fn materialize_project_with_passwords(
                     format!("{} is no longer a supported image", effective.display())
                 })?,
         };
-        pages.push((draft, rotation(stored_page.rotation_degrees)?));
+        pages.push((
+            draft,
+            rotation(stored_page.rotation_degrees)?,
+            stored_page.group_id,
+        ));
     }
     Ok(pages)
 }
@@ -339,6 +381,10 @@ mod tests {
 
         assert_eq!(project.format_version, 1);
         assert_eq!(project.export, settings);
+        assert_eq!(
+            project.pages[0].group_id,
+            Some(workspace.pages()[0].group_id)
+        );
         assert!(matches!(
             &project.pages[0].source,
             ProjectSource::Image { path } if path == Path::new("photo.png")
@@ -362,6 +408,7 @@ mod tests {
                 source: ProjectSource::Image {
                     path: PathBuf::from("missing.png"),
                 },
+                group_id: None,
                 rotation_degrees: 90,
             }],
             export: ExportSettings::default(),
@@ -375,6 +422,7 @@ mod tests {
         let restored = materialize_project(&project_path, &project, &replacements).unwrap();
         assert_eq!(restored[0].1, PageRotation::Deg90);
         assert_eq!(restored[0].0.source.path(), &replacement_path);
+        assert_eq!(restored[0].2, None);
 
         fs::remove_dir_all(directory).unwrap();
     }

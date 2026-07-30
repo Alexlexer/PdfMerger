@@ -6,6 +6,7 @@ use pdf_merger::document;
 use super::{
     AppMessage, PdfMergerApp,
     export_dialog::ExportTarget,
+    jobs::JobPhase,
     password_ui::{PasswordPurpose, PasswordRequest},
 };
 
@@ -38,7 +39,9 @@ impl PdfMergerApp {
 
         let file_count = paths.len();
         let passwords = self.passwords_for_worker();
-        self.active_jobs += 1;
+        let token = self
+            .jobs
+            .start("Import files", JobPhase::Importing, file_count);
         self.set_status(format!("Importing {file_count} file(s)…"), false);
         let sender = self.sender.clone();
         let context = context.clone();
@@ -46,7 +49,11 @@ impl PdfMergerApp {
             let mut pages = Vec::new();
             let mut errors = Vec::new();
             let mut password_requests = Vec::new();
+            let mut completed = 0;
             for path in paths {
+                if token.is_cancelled() {
+                    break;
+                }
                 match document::import_file_with_password(
                     &path,
                     passwords.get(&path).map(|password| password.as_str()),
@@ -62,7 +69,7 @@ impl PdfMergerApp {
                     }
                     Err(document::ImportFailure::Access(error)) => {
                         password_requests.push(PasswordRequest {
-                            path,
+                            path: path.clone(),
                             error,
                             purpose: PasswordPurpose::Import,
                         });
@@ -71,12 +78,23 @@ impl PdfMergerApp {
                         errors.push(format!("{}: {error:#}", path.display()));
                     }
                 }
+                completed += 1;
+                let _ = sender.send(AppMessage::JobProgress {
+                    job_id: token.id(),
+                    phase: JobPhase::Importing,
+                    completed,
+                    total: file_count,
+                    detail: path.display().to_string(),
+                });
+                context.request_repaint();
             }
-            let _ = sender.send(AppMessage::ImportFinished {
-                files: file_count,
+            let _ = sender.send(AppMessage::ImportComplete {
+                job_id: token.id(),
+                files: completed,
                 pages,
                 errors,
                 password_requests,
+                cancelled: token.is_cancelled(),
             });
             context.request_repaint();
         });
@@ -115,16 +133,41 @@ impl PdfMergerApp {
         };
         let settings = self.export_settings.clone();
         let passwords = self.passwords_for_worker();
+        let page_count = pages.len();
+        let token = self
+            .jobs
+            .start("Export PDF", JobPhase::Exporting, page_count);
         let sender = self.sender.clone();
         let context = context.clone();
-        self.active_jobs += 1;
-        self.set_status(format!("Building PDF from {} page(s)…", pages.len()), false);
+        self.set_status(format!("Building PDF from {page_count} page(s)…"), false);
         thread::spawn(move || {
-            let result = document::export_pages_with_settings_and_passwords(
-                &pages, &path, &settings, &passwords,
+            let progress_sender = sender.clone();
+            let progress_context = context.clone();
+            let mut progress = |completed, total| {
+                let _ = progress_sender.send(AppMessage::JobProgress {
+                    job_id: token.id(),
+                    phase: JobPhase::Exporting,
+                    completed,
+                    total,
+                    detail: format!("Page {completed} of {total}"),
+                });
+                progress_context.request_repaint();
+            };
+            let result = document::export_pages_with_settings_and_passwords_controlled(
+                &pages,
+                &path,
+                &settings,
+                &passwords,
+                &mut progress,
+                &|| token.is_cancelled(),
             )
             .map_err(|error| format!("{error:#}"));
-            let _ = sender.send(AppMessage::ExportFinished(result));
+            let cancelled = token.is_cancelled() && result.is_err();
+            let _ = sender.send(AppMessage::ExportComplete {
+                job_id: token.id(),
+                result,
+                cancelled,
+            });
             context.request_repaint();
         });
     }

@@ -8,6 +8,7 @@ there is no browser UI, web server, upload, or cloud processing.
 
 - Drop PDF files and images directly onto the application.
 - See every imported PDF page as an individual card.
+- Keep pages organized in collapsible source-document cards with group-level actions.
 - Convert PNG, JPEG, WebP, BMP, GIF, and TIFF images into A4 PDF pages.
 - Reorder pages with drag and drop or the arrow controls.
 - Select multiple pages for grouped rotation, movement, deletion, or export.
@@ -18,9 +19,13 @@ there is no browser UI, web server, upload, or cloud processing.
 - Save and reopen versioned projects with recent-project access and missing-source recovery.
 - Choose lossless, balanced, or smaller-file export presets with custom image layouts and PDF metadata.
 - Unlock password-protected PDFs for importing, projects, merging, and splitting.
+- Track background imports and exports with progress, cancellation, and copyable diagnostics.
 - Process and save everything locally.
 - Use native open/save dialogs on all supported operating systems.
 
+## Source document groups
+
+Each imported PDF or image batch is shown in a labeled source card. Groups can be collapsed, selected, rotated, exported, removed, or moved earlier and later as a unit. Pages remain individually selectable and reorderable within their source group, and the flattened group order is always the exact order used for export. Group identity is stored in new projects; older projects are grouped automatically from consecutive source files when opened.
 ## Export settings
 
 Every full-workspace or selected-page export opens a settings dialog. Split exports reuse the most recently applied settings.
@@ -50,6 +55,10 @@ Select the pages to process and choose **Split…**. Outputs can be created as:
 - one PDF per custom range, such as `1-3, 5, 7-9`.
 
 Ranges refer to positions within the current selection. PdfMerger validates filenames and refuses to overwrite existing files before starting the background export.
+
+## Background jobs
+
+Imports, exports, split operations, and project restoration run outside the UI thread. The status bar shows the active phase and item/page progress and offers cancellation. Completed warnings and errors are kept in a copyable **Details** view. Cancellation stops at safe document boundaries, and incomplete split outputs are removed.
 
 ## Keyboard shortcuts
 

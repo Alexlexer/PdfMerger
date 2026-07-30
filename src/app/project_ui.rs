@@ -9,12 +9,13 @@ use pdf_merger::{
 
 use super::{
     AppMessage, PdfMergerApp,
+    jobs::JobPhase,
     password_ui::{PasswordPurpose, PasswordRequest},
 };
 
 pub(crate) enum ProjectOpenResult {
     Loaded {
-        pages: Vec<(PageDraft, PageRotation)>,
+        pages: Vec<(PageDraft, PageRotation, Option<u64>)>,
         settings: ExportSettings,
     },
     Missing {
@@ -160,9 +161,10 @@ impl PdfMergerApp {
             Err(error) => self.set_status(error, true),
             Ok(ProjectOpenResult::Loaded { pages, settings }) => {
                 let page_count = pages.len();
-                self.workspace.replace_project_pages(pages);
+                self.workspace.replace_project_pages_grouped(pages);
                 self.selected.clear();
                 self.preview_textures.clear();
+                self.collapsed_groups.clear();
                 self.project_ui.current_project = Some(path.clone());
                 self.export_settings = settings.clone();
                 self.project_ui.saved_fingerprint = self.workspace.fingerprint();
@@ -268,23 +270,49 @@ impl PdfMergerApp {
 
     pub(super) fn start_project_open(&mut self, path: PathBuf, context: &egui::Context) {
         let passwords = self.passwords_for_worker();
+        let token = self.jobs.start(
+            format!(
+                "Open {}",
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("project")
+            ),
+            JobPhase::OpeningProject,
+            0,
+        );
         let sender = self.sender.clone();
         let context = context.clone();
         let message_path = path.clone();
-        self.active_jobs += 1;
         self.set_status(format!("Opening project {}…", path.display()), false);
         thread::spawn(move || {
+            let progress_sender = sender.clone();
+            let progress_context = context.clone();
+            let mut progress = |completed: usize, total: usize, source: &std::path::Path| {
+                let _ = progress_sender.send(AppMessage::JobProgress {
+                    job_id: token.id(),
+                    phase: JobPhase::Importing,
+                    completed,
+                    total,
+                    detail: source.display().to_string(),
+                });
+                progress_context.request_repaint();
+            };
             let result = (|| {
+                if token.is_cancelled() {
+                    anyhow::bail!("project open cancelled");
+                }
                 let project = project::read_project(&path)?;
                 let replacements = HashMap::new();
                 let missing = project::missing_sources(&path, &project, &replacements);
                 if missing.is_empty() {
                     let settings = project.export.clone();
-                    match project::materialize_project_with_passwords(
+                    match project::materialize_project_with_passwords_controlled(
                         &path,
                         &project,
                         &replacements,
                         &passwords,
+                        &mut progress,
+                        &|| token.is_cancelled(),
                     ) {
                         Ok(pages) => Ok(ProjectOpenResult::Loaded { pages, settings }),
                         Err(project::MaterializeFailure::Access {
@@ -308,29 +336,46 @@ impl PdfMergerApp {
                 }
             })()
             .map_err(|error: anyhow::Error| format!("{error:#}"));
-            let _ = sender.send(AppMessage::ProjectFinished {
+            let _ = sender.send(AppMessage::ProjectComplete {
+                job_id: token.id(),
                 path: message_path,
                 result,
+                cancelled: token.is_cancelled(),
             });
             context.request_repaint();
         });
     }
-
     fn start_project_recovery(&mut self, state: MissingSourcesState, context: &egui::Context) {
         let passwords = self.passwords_for_worker();
+        let token = self
+            .jobs
+            .start("Restore project sources", JobPhase::OpeningProject, 0);
         let sender = self.sender.clone();
         let context = context.clone();
         let path = state.project_path.clone();
         let message_path = path.clone();
-        self.active_jobs += 1;
         self.set_status("Restoring project sources…", false);
         thread::spawn(move || {
+            let progress_sender = sender.clone();
+            let progress_context = context.clone();
+            let mut progress = |completed: usize, total: usize, source: &std::path::Path| {
+                let _ = progress_sender.send(AppMessage::JobProgress {
+                    job_id: token.id(),
+                    phase: JobPhase::Importing,
+                    completed,
+                    total,
+                    detail: source.display().to_string(),
+                });
+                progress_context.request_repaint();
+            };
             let settings = state.project.export.clone();
-            let result = match project::materialize_project_with_passwords(
+            let result = match project::materialize_project_with_passwords_controlled(
                 &path,
                 &state.project,
                 &state.replacements,
                 &passwords,
+                &mut progress,
+                &|| token.is_cancelled(),
             ) {
                 Ok(pages) => Ok(ProjectOpenResult::Loaded { pages, settings }),
                 Err(project::MaterializeFailure::Access {
@@ -348,14 +393,15 @@ impl PdfMergerApp {
                 }
                 Err(project::MaterializeFailure::Other(error)) => Err(format!("{error:#}")),
             };
-            let _ = sender.send(AppMessage::ProjectFinished {
+            let _ = sender.send(AppMessage::ProjectComplete {
+                job_id: token.id(),
                 path: message_path,
                 result,
+                cancelled: token.is_cancelled(),
             });
             context.request_repaint();
         });
     }
-
     fn show_discard_prompt(&mut self, context: &egui::Context) {
         let Some(pending) = self.project_ui.pending_action.clone() else {
             return;
@@ -472,6 +518,7 @@ impl PdfMergerApp {
     fn clear_to_new_workspace(&mut self) {
         self.workspace.replace_project_pages([]);
         self.preview_textures.clear();
+        self.collapsed_groups.clear();
         self.selected.clear();
         self.project_ui.current_project = None;
         self.export_settings = ExportSettings::default();

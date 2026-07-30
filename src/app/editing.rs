@@ -93,12 +93,14 @@ impl PdfMergerApp {
 
     pub(super) fn move_selected_to_start(&mut self) {
         if self.workspace.move_ids_to_start(&self.selected) {
+            self.retain_existing_selection();
             self.set_status("Moved selected pages to the start.", false);
         }
     }
 
     pub(super) fn move_selected_to_end(&mut self) {
         if self.workspace.move_ids_to_end(&self.selected) {
+            self.retain_existing_selection();
             self.set_status("Moved selected pages to the end.", false);
         }
     }
@@ -123,6 +125,14 @@ impl PdfMergerApp {
             .map(|page| page.id)
             .collect::<HashSet<_>>();
         self.selected.retain(|id| existing.contains(id));
+        let existing_groups = self
+            .workspace
+            .groups()
+            .into_iter()
+            .map(|group| group.id)
+            .collect::<HashSet<_>>();
+        self.collapsed_groups
+            .retain(|group_id| existing_groups.contains(group_id));
     }
 
     fn rotate_ids(&mut self, ids: &HashSet<u64>) {

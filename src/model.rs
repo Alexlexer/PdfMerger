@@ -101,6 +101,7 @@ pub struct PageDraft {
 #[derive(Clone, Debug)]
 pub struct PageItem {
     pub id: u64,
+    pub group_id: u64,
     pub source: PageSource,
     pub title: String,
     pub subtitle: String,
@@ -108,10 +109,24 @@ pub struct PageItem {
     pub rotation: PageRotation,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PageGroup {
+    pub id: u64,
+    pub start: usize,
+    pub end: usize,
+    pub source_path: PathBuf,
+}
+
+impl PageGroup {
+    pub fn page_count(&self) -> usize {
+        self.end - self.start
+    }
+}
 #[derive(Default)]
 pub struct Workspace {
     pages: Vec<PageItem>,
     next_id: u64,
+    next_group_id: u64,
     undo_stack: Vec<Vec<PageItem>>,
     redo_stack: Vec<Vec<PageItem>>,
 }
@@ -132,6 +147,7 @@ impl Workspace {
     pub fn fingerprint(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         for page in &self.pages {
+            page.group_id.hash(&mut hasher);
             page.source.hash(&mut hasher);
             page.rotation.hash(&mut hasher);
         }
@@ -142,14 +158,45 @@ impl Workspace {
         &mut self,
         pages: impl IntoIterator<Item = (PageDraft, PageRotation)>,
     ) {
+        self.replace_project_pages_grouped(
+            pages
+                .into_iter()
+                .map(|(draft, rotation)| (draft, rotation, None)),
+        );
+    }
+
+    pub fn replace_project_pages_grouped(
+        &mut self,
+        pages: impl IntoIterator<Item = (PageDraft, PageRotation, Option<u64>)>,
+    ) {
         self.pages.clear();
         self.undo_stack.clear();
         self.redo_stack.clear();
         self.next_id = 0;
-        for (draft, rotation) in pages {
+        self.next_group_id = 0;
+        let mut legacy_group: Option<(PathBuf, u64)> = None;
+        for (draft, rotation, stored_group) in pages {
+            let group_id = if let Some(group_id) = stored_group {
+                self.next_group_id = self.next_group_id.max(group_id);
+                legacy_group = None;
+                group_id
+            } else if let Some((path, group_id)) = &legacy_group {
+                if path == draft.source.path() {
+                    *group_id
+                } else {
+                    self.next_group_id += 1;
+                    legacy_group = Some((draft.source.path().clone(), self.next_group_id));
+                    self.next_group_id
+                }
+            } else {
+                self.next_group_id += 1;
+                legacy_group = Some((draft.source.path().clone(), self.next_group_id));
+                self.next_group_id
+            };
             self.next_id += 1;
             self.pages.push(PageItem {
                 id: self.next_id,
+                group_id,
                 source: draft.source,
                 title: draft.title,
                 subtitle: draft.subtitle,
@@ -157,6 +204,7 @@ impl Workspace {
                 rotation,
             });
         }
+        self.normalize_group_runs();
     }
 
     pub fn append(&mut self, drafts: impl IntoIterator<Item = PageDraft>) {
@@ -165,10 +213,25 @@ impl Workspace {
             return;
         }
         self.record_history();
+        let mut current_group: Option<(PathBuf, u64)> = None;
         for draft in drafts {
+            let group_id = if let Some((path, group_id)) = &current_group {
+                if path == draft.source.path() {
+                    *group_id
+                } else {
+                    self.next_group_id += 1;
+                    current_group = Some((draft.source.path().clone(), self.next_group_id));
+                    self.next_group_id
+                }
+            } else {
+                self.next_group_id += 1;
+                current_group = Some((draft.source.path().clone(), self.next_group_id));
+                self.next_group_id
+            };
             self.next_id += 1;
             self.pages.push(PageItem {
                 id: self.next_id,
+                group_id,
                 source: draft.source,
                 title: draft.title,
                 subtitle: draft.subtitle,
@@ -177,7 +240,6 @@ impl Workspace {
             });
         }
     }
-
     pub fn remove(&mut self, index: usize) -> bool {
         if index >= self.pages.len() {
             return false;
@@ -222,9 +284,57 @@ impl Workspace {
         self.record_history();
         let page = self.pages.remove(from);
         self.pages.insert(adjusted_to.min(self.pages.len()), page);
+        self.normalize_group_runs();
         true
     }
 
+    pub fn groups(&self) -> Vec<PageGroup> {
+        let mut groups = Vec::new();
+        let mut start = 0;
+        while start < self.pages.len() {
+            let group_id = self.pages[start].group_id;
+            let mut end = start + 1;
+            while end < self.pages.len() && self.pages[end].group_id == group_id {
+                end += 1;
+            }
+            groups.push(PageGroup {
+                id: group_id,
+                start,
+                end,
+                source_path: self.pages[start].source.path().clone(),
+            });
+            start = end;
+        }
+        groups
+    }
+
+    pub fn group_page_ids(&self, group_id: u64) -> HashSet<u64> {
+        self.pages
+            .iter()
+            .filter(|page| page.group_id == group_id)
+            .map(|page| page.id)
+            .collect()
+    }
+
+    pub fn move_group(&mut self, from: usize, to: usize) -> bool {
+        let groups = self.groups();
+        if from >= groups.len() || to > groups.len() || from == to {
+            return false;
+        }
+        let adjusted_to = if from < to { to - 1 } else { to };
+        if adjusted_to == from {
+            return false;
+        }
+        let mut chunks = groups
+            .iter()
+            .map(|group| self.pages[group.start..group.end].to_vec())
+            .collect::<Vec<_>>();
+        let moved = chunks.remove(from);
+        chunks.insert(adjusted_to.min(chunks.len()), moved);
+        self.record_history();
+        self.pages = chunks.into_iter().flatten().collect();
+        true
+    }
     pub fn rotate_ids_clockwise(&mut self, ids: &HashSet<u64>) -> usize {
         let affected = self
             .pages
@@ -308,9 +418,28 @@ impl Workspace {
         }
         self.record_history();
         self.pages = reordered;
+        self.normalize_group_runs();
         true
     }
 
+    fn normalize_group_runs(&mut self) {
+        let mut seen = HashSet::new();
+        let mut start = 0;
+        while start < self.pages.len() {
+            let group_id = self.pages[start].group_id;
+            let mut end = start + 1;
+            while end < self.pages.len() && self.pages[end].group_id == group_id {
+                end += 1;
+            }
+            if !seen.insert(group_id) {
+                self.next_group_id += 1;
+                for page in &mut self.pages[start..end] {
+                    page.group_id = self.next_group_id;
+                }
+            }
+            start = end;
+        }
+    }
     fn record_history(&mut self) {
         self.push_undo(self.pages.clone());
         self.redo_stack.clear();
@@ -404,5 +533,53 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["two", "three", "one"]
         );
+    }
+    #[test]
+    fn creates_distinct_source_groups_and_reorders_them_as_units() {
+        fn sourced(path: &str, title: &str) -> PageDraft {
+            PageDraft {
+                source: PageSource::Image {
+                    path: PathBuf::from(path),
+                },
+                title: title.to_owned(),
+                subtitle: String::new(),
+                preview: None,
+            }
+        }
+
+        let mut workspace = Workspace::default();
+        workspace.append([
+            sourced("first.pdf", "first-1"),
+            sourced("first.pdf", "first-2"),
+            sourced("second.pdf", "second-1"),
+        ]);
+        let initial_groups = workspace.groups();
+        assert_eq!(initial_groups.len(), 2);
+        assert_eq!(initial_groups[0].page_count(), 2);
+        assert_eq!(initial_groups[1].page_count(), 1);
+
+        workspace.append([sourced("first.pdf", "first-again")]);
+        let groups = workspace.groups();
+        assert_eq!(groups.len(), 3);
+        assert_ne!(groups[0].id, groups[2].id);
+        assert!(workspace.move_group(2, 0));
+        assert_eq!(workspace.pages()[0].title, "first-again");
+        assert_eq!(workspace.groups()[1].page_count(), 2);
+    }
+
+    #[test]
+    fn restores_legacy_pages_as_consecutive_source_groups() {
+        let pages = [
+            (draft("one"), PageRotation::Deg0),
+            (draft("one"), PageRotation::Deg90),
+            (draft("two"), PageRotation::Deg0),
+        ];
+        let mut workspace = Workspace::default();
+        workspace.replace_project_pages(pages);
+
+        let groups = workspace.groups();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].page_count(), 2);
+        assert_eq!(groups[1].page_count(), 1);
     }
 }

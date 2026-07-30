@@ -15,6 +15,7 @@ use pdf_merger::{
 mod actions;
 mod editing;
 mod export_dialog;
+mod jobs;
 mod page_grid;
 mod password_ui;
 mod project_ui;
@@ -23,17 +24,37 @@ mod style;
 mod ui;
 
 pub(super) enum AppMessage {
-    ImportFinished {
+    JobProgress {
+        job_id: jobs::JobId,
+        phase: jobs::JobPhase,
+        completed: usize,
+        total: usize,
+        detail: String,
+    },
+    ImportComplete {
+        job_id: jobs::JobId,
         files: usize,
         pages: Vec<PageDraft>,
         errors: Vec<String>,
         password_requests: Vec<password_ui::PasswordRequest>,
+        cancelled: bool,
     },
-    ExportFinished(Result<ExportReport, String>),
-    SplitFinished(SplitReport),
-    ProjectFinished {
+    ExportComplete {
+        job_id: jobs::JobId,
+        result: Result<ExportReport, String>,
+        cancelled: bool,
+    },
+    SplitComplete {
+        job_id: jobs::JobId,
+        report: SplitReport,
+        warnings: Vec<String>,
+        cancelled: bool,
+    },
+    ProjectComplete {
+        job_id: jobs::JobId,
         path: PathBuf,
         result: Result<project_ui::ProjectOpenResult, String>,
+        cancelled: bool,
     },
 }
 
@@ -41,11 +62,12 @@ pub struct PdfMergerApp {
     pub(super) workspace: Workspace,
     pub(super) sender: Sender<AppMessage>,
     pub(super) receiver: Receiver<AppMessage>,
-    pub(super) active_jobs: usize,
+    pub(super) jobs: jobs::JobManager,
     pub(super) status: String,
     pub(super) status_is_error: bool,
     pub(super) preview_textures: HashMap<u64, egui::TextureHandle>,
     pub(super) selected: HashSet<u64>,
+    pub(super) collapsed_groups: HashSet<u64>,
     pub(super) split_dialog: split_dialog::SplitDialogState,
     pub(super) project_ui: project_ui::ProjectUiState,
     pub(super) export_settings: ExportSettings,
@@ -67,11 +89,12 @@ impl PdfMergerApp {
             workspace,
             sender,
             receiver,
-            active_jobs: 0,
+            jobs: jobs::JobManager::default(),
             status: "Drop PDFs or images here to begin.".to_owned(),
             status_is_error: false,
             preview_textures: HashMap::new(),
             selected: HashSet::new(),
+            collapsed_groups: HashSet::new(),
             split_dialog: split_dialog::SplitDialogState::default(),
             project_ui,
             export_settings,
@@ -83,19 +106,37 @@ impl PdfMergerApp {
 
     fn receive_messages(&mut self) {
         while let Ok(message) = self.receiver.try_recv() {
-            self.active_jobs = self.active_jobs.saturating_sub(1);
             match message {
-                AppMessage::ImportFinished {
+                AppMessage::JobProgress {
+                    job_id,
+                    phase,
+                    completed,
+                    total,
+                    detail,
+                } => self.jobs.update(job_id, phase, completed, total, detail),
+                AppMessage::ImportComplete {
+                    job_id,
                     files,
                     pages,
                     errors,
                     password_requests,
+                    cancelled,
                 } => {
+                    self.jobs.finish(job_id);
                     let imported = pages.len();
                     let requested = password_requests.len();
                     self.workspace.append(pages);
                     self.enqueue_password_requests(password_requests);
-                    if errors.is_empty() && requested == 0 {
+                    for error in &errors {
+                        self.jobs
+                            .record(jobs::DiagnosticLevel::Error, "File import failed", error);
+                    }
+                    if cancelled {
+                        self.set_status(
+                            format!("Import cancelled after adding {imported} page(s)."),
+                            false,
+                        );
+                    } else if errors.is_empty() && requested == 0 {
                         self.set_status(
                             format!("Added {files} file(s) as {imported} page(s)."),
                             false,
@@ -106,37 +147,96 @@ impl PdfMergerApp {
                             false,
                         );
                     } else {
-                        self.set_status(errors.join("  "), true);
-                    }
-                }
-                AppMessage::ExportFinished(result) => match result {
-                    Ok(report) => {
-                        let warning_suffix = if report.warnings.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" ({} warning(s))", report.warnings.len())
-                        };
                         self.set_status(
                             format!(
-                                "Saved {} page(s) to {}{warning_suffix}",
-                                report.page_count,
-                                report.path.display()
+                                "Added {imported} page(s); {} file(s) failed. See Details.",
+                                errors.len()
+                            ),
+                            true,
+                        );
+                    }
+                }
+                AppMessage::ExportComplete {
+                    job_id,
+                    result,
+                    cancelled,
+                } => {
+                    self.jobs.finish(job_id);
+                    if cancelled {
+                        self.set_status("Export cancelled. No incomplete output was kept.", false);
+                        continue;
+                    }
+                    match result {
+                        Ok(report) => {
+                            for warning in &report.warnings {
+                                self.jobs.record(
+                                    jobs::DiagnosticLevel::Warning,
+                                    format!("Export warning for {}", report.path.display()),
+                                    warning,
+                                );
+                            }
+                            let warning_suffix = if report.warnings.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" ({} warning(s); see Details)", report.warnings.len())
+                            };
+                            self.set_status(
+                                format!(
+                                    "Saved {} page(s) to {}{warning_suffix}",
+                                    report.page_count,
+                                    report.path.display()
+                                ),
+                                false,
+                            );
+                        }
+                        Err(error) => {
+                            self.jobs.record(
+                                jobs::DiagnosticLevel::Error,
+                                "PDF export failed",
+                                &error,
+                            );
+                            self.set_status("PDF export failed. See Details.", true);
+                        }
+                    }
+                }
+                AppMessage::SplitComplete {
+                    job_id,
+                    report,
+                    warnings,
+                    cancelled,
+                } => {
+                    self.jobs.finish(job_id);
+                    for failure in &report.failures {
+                        self.jobs.record(
+                            jobs::DiagnosticLevel::Error,
+                            "Split output failed",
+                            failure,
+                        );
+                    }
+                    for warning in &warnings {
+                        self.jobs.record(
+                            jobs::DiagnosticLevel::Warning,
+                            "Split export warning",
+                            warning,
+                        );
+                    }
+                    if cancelled {
+                        self.set_status(
+                            format!(
+                                "Split cancelled after creating {} complete PDF(s).",
+                                report.written.len()
                             ),
                             false,
                         );
-                    }
-                    Err(error) => self.set_status(error, true),
-                },
-                AppMessage::SplitFinished(report) => {
-                    let warning_suffix = if report.warning_count == 0 {
-                        String::new()
-                    } else {
-                        format!("; {} warning(s)", report.warning_count)
-                    };
-                    if report.failures.is_empty() {
+                    } else if report.failures.is_empty() {
+                        let suffix = if report.warning_count == 0 {
+                            String::new()
+                        } else {
+                            format!("; {} warning(s), see Details", report.warning_count)
+                        };
                         self.set_status(
                             format!(
-                                "Created {} PDF(s) in {}{warning_suffix}",
+                                "Created {} PDF(s) in {}{suffix}",
                                 report.written.len(),
                                 report.directory.display()
                             ),
@@ -145,17 +245,33 @@ impl PdfMergerApp {
                     } else {
                         self.set_status(
                             format!(
-                                "Created {} PDF(s); {} failed: {}",
+                                "Created {} PDF(s); {} failed. See Details.",
                                 report.written.len(),
-                                report.failures.len(),
-                                report.failures[0]
+                                report.failures.len()
                             ),
                             true,
                         );
                     }
                 }
-                AppMessage::ProjectFinished { path, result } => {
-                    self.finish_project_open(path, result);
+                AppMessage::ProjectComplete {
+                    job_id,
+                    path,
+                    result,
+                    cancelled,
+                } => {
+                    self.jobs.finish(job_id);
+                    if cancelled {
+                        self.set_status("Project open cancelled.", false);
+                    } else {
+                        if let Err(error) = &result {
+                            self.jobs.record(
+                                jobs::DiagnosticLevel::Error,
+                                "Project open failed",
+                                error,
+                            );
+                        }
+                        self.finish_project_open(path, result);
+                    }
                 }
             }
         }
@@ -193,6 +309,7 @@ impl eframe::App for PdfMergerApp {
         self.show_split_dialog(&context);
         self.show_project_dialogs(&context);
         self.show_password_prompt(&context);
+        self.jobs.show_details(&context);
         self.file_drop_overlay(&context);
     }
 }

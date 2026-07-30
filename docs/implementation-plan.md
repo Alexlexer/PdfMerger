@@ -16,9 +16,9 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 
 ## Implementation status
 
-- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, and protected-PDF support.
-- Next: job progress, cancellation, and diagnostics.
-- Later: PDF structure preservation and release polish.
+- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, and source-document group cards.
+- Next: PDF structure preservation.
+- Later: accessibility and release polish.
 
 ## Delivery milestones
 
@@ -70,13 +70,20 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 - Add a copyable details view for warnings/errors while keeping concise status text.
 - Ensure cancellation cleans up incomplete output files.
 
-### 7. PDF structure preservation
+### 7. Source-document group cards
+
+- Represent each imported source as a labeled, collapsible document group.
+- Preserve exact merge order while supporting whole-group and individual-page reordering.
+- Add group-level selection, rotation, removal, and export actions.
+- Keep project serialization backward compatible and restore group organization on open.
+
+### 8. PDF structure preservation
 
 - Inventory and test preservation of metadata, outlines/bookmarks, links, annotations, forms, named destinations, labels, and page boxes.
 - Preserve structures only when references can be remapped safely; warn when an operation necessarily drops or rewrites them.
 - Add fixture-based integration tests covering mixed source PDFs.
 
-### 8. Accessibility, polish, and release readiness
+### 9. Accessibility, polish, and release readiness
 
 - Complete keyboard navigation, accessible labels, focus states, and high-contrast checks.
 - Add localization-ready user-facing strings.

@@ -6,7 +6,7 @@ use pdf_merger::{
     split::{self, PlannedSplit, SplitMode, SplitReport},
 };
 
-use super::{AppMessage, PdfMergerApp};
+use super::{AppMessage, PdfMergerApp, jobs::JobPhase};
 
 pub(crate) struct SplitDialogState {
     open: bool,
@@ -154,11 +154,14 @@ impl PdfMergerApp {
         planned: Vec<PlannedSplit>,
     ) {
         let output_count = planned.len();
+        let total_pages = planned.iter().map(|output| output.pages.len()).sum();
         let settings = self.export_settings.clone();
         let passwords = self.passwords_for_worker();
+        let token = self
+            .jobs
+            .start("Split PDF", JobPhase::Exporting, total_pages);
         let sender = self.sender.clone();
         let context = context.clone();
-        self.active_jobs += 1;
         self.set_status(format!("Creating {output_count} split PDF(s)…"), false);
 
         thread::spawn(move || {
@@ -168,33 +171,79 @@ impl PdfMergerApp {
                 failures: Vec::new(),
                 warning_count: 0,
             };
+            let mut warnings = Vec::new();
+            let mut processed_pages = 0;
             for output in planned {
+                if token.is_cancelled() {
+                    break;
+                }
+                let output_pages = output.pages.len();
                 if output.path.exists() {
                     report.failures.push(format!(
                         "{} appeared after validation and was not overwritten",
                         output.path.display()
                     ));
+                    processed_pages += output_pages;
+                    let _ = sender.send(AppMessage::JobProgress {
+                        job_id: token.id(),
+                        phase: JobPhase::Exporting,
+                        completed: processed_pages,
+                        total: total_pages,
+                        detail: output.path.display().to_string(),
+                    });
+                    context.request_repaint();
                     continue;
                 }
-                match document::export_pages_with_settings_and_passwords(
+                let progress_sender = sender.clone();
+                let progress_context = context.clone();
+                let path_label = output.path.display().to_string();
+                let base = processed_pages;
+                let mut progress = |completed, _| {
+                    let _ = progress_sender.send(AppMessage::JobProgress {
+                        job_id: token.id(),
+                        phase: JobPhase::Exporting,
+                        completed: base + completed,
+                        total: total_pages,
+                        detail: path_label.clone(),
+                    });
+                    progress_context.request_repaint();
+                };
+                match document::export_pages_with_settings_and_passwords_controlled(
                     &output.pages,
                     &output.path,
                     &settings,
                     &passwords,
+                    &mut progress,
+                    &|| token.is_cancelled(),
                 ) {
                     Ok(export) => {
                         report.warning_count += export.warnings.len();
+                        warnings.extend(
+                            export
+                                .warnings
+                                .into_iter()
+                                .map(|warning| format!("{}: {warning}", output.path.display())),
+                        );
                         report.written.push(output.path);
                     }
                     Err(error) => {
                         let _ = fs::remove_file(&output.path);
+                        if token.is_cancelled() {
+                            break;
+                        }
                         report
                             .failures
                             .push(format!("{}: {error:#}", output.path.display()));
                     }
                 }
+                processed_pages += output_pages;
             }
-            let _ = sender.send(AppMessage::SplitFinished(report));
+            let _ = sender.send(AppMessage::SplitComplete {
+                job_id: token.id(),
+                report,
+                warnings,
+                cancelled: token.is_cancelled(),
+            });
             context.request_repaint();
         });
     }
