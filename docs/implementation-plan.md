@@ -16,9 +16,8 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 
 ## Implementation status
 
-- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, and source-document group cards.
-- Next: PDF structure preservation.
-- Later: accessibility and release polish.
+- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, and PDF structure preservation.
+- Next: accessibility, polish, and release readiness.
 
 ## Delivery milestones
 
@@ -78,7 +77,7 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 - Add group-level selection, rotation, removal, and export actions.
 - Keep project serialization backward compatible and restore group organization on open.
 
-### 8. PDF structure preservation
+### 8. PDF structure preservation (completed)
 
 - Inventory and test preservation of metadata, outlines/bookmarks, links, annotations, forms, named destinations, labels, and page boxes.
 - Preserve structures only when references can be remapped safely; warn when an operation necessarily drops or rewrites them.

@@ -24,6 +24,7 @@ image = { version = "0.25", default-features = false, features = [
     "tiff",
     "webp",
 ] }
+indexmap = "2.13"
 lopdf = "0.44"
 printpdf = { version = "0.12", default-features = false, features = [
     "bmp",

@@ -19,6 +19,8 @@ there is no browser UI, web server, upload, or cloud processing.
 - Save and reopen versioned projects with recent-project access and missing-source recovery.
 - Choose lossless, balanced, or smaller-file export presets with custom image layouts and PDF metadata.
 - Unlock password-protected PDFs for importing, projects, merging, and splitting.
+- Preserve page boxes/resources, external links, annotations, compatible metadata, and page-targeted bookmarks during export.
+- Report PDF structures that cannot be safely remapped, including forms, labels, named destinations, layers, and tagged-PDF trees.
 - Track background imports and exports with progress, cancellation, and copyable diagnostics.
 - Process and save everything locally.
 - Use native open/save dialogs on all supported operating systems.
@@ -35,7 +37,7 @@ Every full-workspace or selected-page export opens a settings dialog. Split expo
 - **Balanced** limits large images to 2400 pixels and uses 85% quality.
 - **Smaller file** limits images to 1600 pixels and uses 65% JPEG compression.
 
-Images can be placed on automatically oriented A4 pages, sized from their pixel dimensions at a chosen DPI, or fitted to a custom page size. Margins, downsampling, quality, and title/author/subject/keyword metadata are configurable. Imported PDF pages continue to be copied from their original object trees rather than rasterized. Export settings are stored in `.pdfmerger` projects.
+Images can be placed on automatically oriented A4 pages, sized from their pixel dimensions at a chosen DPI, or fitted to a custom page size. Margins, downsampling, quality, and title/author/subject/keyword metadata are configurable. Imported PDF pages continue to be copied from their original object trees rather than rasterized. Inherited page resources and boxes are materialized before extraction; external links and ordinary page annotations remain active, compatible source metadata is retained unless overridden, and bookmarks targeting exported pages are rebuilt against their new page IDs. Unsafe cross-page links are disabled instead of left dangling. Structures that cannot be safely remapped produce export warnings in the Details view. Export settings are stored in `.pdfmerger` projects.
 
 ## Projects
 
@@ -98,7 +100,8 @@ The executable is written to `target/release/pdf-merger` (or
 ## How export works
 
 Existing PDF pages are merged from their original PDF object trees so they are
-not flattened into screenshots. Images are decoded locally, fitted to an A4
+not flattened into screenshots. Safe page-level structures are retained and catalog-level
+structures are rebuilt where possible; unsupported rewrites are reported explicitly. Images are decoded locally, fitted to an A4
 portrait or landscape page with margins, and embedded into the output PDF.
 
 ## Supported platforms

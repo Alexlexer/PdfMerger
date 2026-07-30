@@ -2854,6 +2854,7 @@ dependencies = [
  "eframe",
  "hayro",
  "image",
+ "indexmap",
  "lopdf",
  "printpdf",
  "rfd",

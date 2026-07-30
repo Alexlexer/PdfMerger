@@ -5,7 +5,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use lopdf::{Document, Object, dictionary};
+use indexmap::IndexMap;
+use lopdf::{Bookmark, Dictionary, Document, Object, ObjectId, Outline, dictionary};
 use zeroize::Zeroizing;
 
 use printpdf::{
@@ -67,6 +68,23 @@ pub struct ExportReport {
     pub path: PathBuf,
     pub page_count: usize,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug)]
+struct PreparedDocument {
+    document: Document,
+    bookmarks: Vec<String>,
+    metadata: Option<Dictionary>,
+}
+
+impl PreparedDocument {
+    fn plain(document: Document) -> Self {
+        Self {
+            document,
+            bookmarks: Vec::new(),
+            metadata: None,
+        }
+    }
 }
 
 pub fn is_supported(path: &Path) -> bool {
@@ -268,7 +286,7 @@ pub fn export_pages_with_settings_and_passwords_controlled(
         if cancelled() {
             bail!("export cancelled");
         }
-        let document = match &page.source {
+        let prepared = match &page.source {
             PageSource::Pdf { path, page_number } => {
                 if !pdf_cache.contains_key(path) {
                     let mut loaded = Document::load(path)
@@ -278,29 +296,33 @@ pub fn export_pages_with_settings_and_passwords_controlled(
                         passwords.get(path).map(|password| password.as_str()),
                     )
                     .map_err(|error| anyhow!("{}: {error}", path.display()))?;
+                    warnings.extend(catalog_structure_warnings(&loaded, path));
                     pdf_cache.insert(path.clone(), loaded);
                 }
                 let source = pdf_cache
                     .get(path)
                     .expect("a PDF inserted into the cache must be available")
                     .clone();
-                let mut document = retain_single_page(source, *page_number)?;
-                rotate_pdf_page(&mut document, page.rotation)?;
-                document
+                let mut prepared = prepare_pdf_page(source, *page_number, path, &mut warnings)?;
+                rotate_pdf_page(&mut prepared.document, page.rotation)?;
+                prepared
             }
             PageSource::Image { path } => {
-                image_as_pdf(path, page.rotation, settings, &mut warnings)?
+                PreparedDocument::plain(image_as_pdf(path, page.rotation, settings, &mut warnings)?)
             }
         };
-        documents.push(document);
+        documents.push(prepared);
         progress(index + 1, pages.len());
     }
 
     if cancelled() {
         bail!("export cancelled");
     }
+    let base_metadata = documents
+        .iter()
+        .find_map(|prepared| prepared.metadata.clone());
     let mut merged = merge_documents(documents)?;
-    apply_pdf_metadata(&mut merged, settings);
+    apply_pdf_metadata(&mut merged, settings, base_metadata.as_ref());
     merged.compress();
     if cancelled() {
         bail!("export cancelled");
@@ -357,12 +379,398 @@ fn unlock_pdf(
         Err(error) => Err(PdfAccessError::UnsupportedEncryption(error.to_string())),
     }
 }
+fn prepare_pdf_page(
+    source: Document,
+    page_number: u32,
+    path: &Path,
+    warnings: &mut Vec<String>,
+) -> Result<PreparedDocument> {
+    let page_id = source
+        .get_pages()
+        .get(&page_number)
+        .copied()
+        .with_context(|| format!("PDF page {page_number} no longer exists"))?;
+    let metadata = extract_source_metadata(&source);
+    let bookmarks = match extract_bookmarks_for_page(&source, page_id) {
+        Ok(bookmarks) => bookmarks,
+        Err(error) => {
+            warnings.push(format!(
+                "{} page {page_number}: bookmarks could not be read ({error})",
+                path.display()
+            ));
+            Vec::new()
+        }
+    };
+    let mut document = source;
+    let disabled_links = disable_unsafe_internal_links(&mut document, page_id)?;
+    if disabled_links > 0 {
+        warnings.push(format!(
+            "{} page {page_number}: disabled {disabled_links} internal link(s) whose destinations cannot be safely remapped",
+            path.display()
+        ));
+    }
+    let document = retain_single_page(document, page_number)?;
+
+    Ok(PreparedDocument {
+        document,
+        bookmarks,
+        metadata,
+    })
+}
+
+fn extract_source_metadata(document: &Document) -> Option<Dictionary> {
+    const KEYS: &[&[u8]] = &[
+        b"Title",
+        b"Author",
+        b"Subject",
+        b"Keywords",
+        b"Creator",
+        b"CreationDate",
+        b"ModDate",
+        b"Trapped",
+    ];
+
+    let info_object = document.trailer.get(b"Info").ok()?;
+    let info = match info_object {
+        Object::Dictionary(dictionary) => dictionary,
+        Object::Reference(id) => document.get_dictionary(*id).ok()?,
+        _ => return None,
+    };
+    let mut copied = Dictionary::new();
+    for key in KEYS {
+        if let Ok(value) = info.get(key)
+            && matches!(
+                value,
+                Object::Boolean(_)
+                    | Object::Integer(_)
+                    | Object::Real(_)
+                    | Object::Name(_)
+                    | Object::String(_, _)
+            )
+        {
+            copied.set(*key, value.clone());
+        }
+    }
+    (!copied.is_empty()).then_some(copied)
+}
+
+fn extract_bookmarks_for_page(document: &Document, page_id: ObjectId) -> Result<Vec<String>> {
+    if document
+        .catalog()
+        .ok()
+        .is_none_or(|catalog| catalog.get(b"Outlines").is_err())
+    {
+        return Ok(Vec::new());
+    }
+
+    let mut named_destinations = IndexMap::new();
+    let outlines = document
+        .get_outlines(None, None, &mut named_destinations)?
+        .unwrap_or_default();
+    let mut titles = Vec::new();
+    collect_bookmarks_for_page(&outlines, page_id, &mut titles);
+    Ok(titles)
+}
+
+fn collect_bookmarks_for_page(outlines: &[Outline], page_id: ObjectId, titles: &mut Vec<String>) {
+    for outline in outlines {
+        match outline {
+            Outline::Destination(destination) => {
+                if destination.page().and_then(Object::as_reference).ok() == Some(page_id)
+                    && let Ok(title) = destination.title().and_then(Object::as_str)
+                {
+                    titles.push(decode_pdf_text(title));
+                }
+            }
+            Outline::SubOutlines(children) => {
+                collect_bookmarks_for_page(children, page_id, titles);
+            }
+        }
+    }
+}
+
+fn decode_pdf_text(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xfe, 0xff]) {
+        let units = bytes[2..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]));
+        String::from_utf16_lossy(&units.collect::<Vec<_>>())
+    } else {
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+}
+
+fn catalog_structure_warnings(document: &Document, path: &Path) -> Vec<String> {
+    let Ok(catalog) = document.catalog() else {
+        return Vec::new();
+    };
+    let mut warnings = Vec::new();
+    let label = path.display();
+
+    if catalog.get(b"Outlines").is_ok() {
+        warnings.push(format!(
+            "{label}: bookmarks targeting exported pages are preserved; hierarchy, styles, and zoom settings are simplified"
+        ));
+    }
+    if catalog.get(b"AcroForm").is_ok() {
+        warnings.push(format!(
+            "{label}: interactive form fields may lose document-level behavior; page appearances are preserved"
+        ));
+    }
+    if catalog.get(b"PageLabels").is_ok() {
+        warnings.push(format!(
+            "{label}: custom page labels are not preserved after page reordering"
+        ));
+    }
+    if catalog.get(b"Names").is_ok() || catalog.get(b"Dests").is_ok() {
+        warnings.push(format!(
+            "{label}: document-level named destinations and name trees are rewritten or omitted"
+        ));
+    }
+    if catalog.get(b"Metadata").is_ok() {
+        warnings.push(format!(
+            "{label}: XMP metadata is omitted; compatible document information fields are preserved"
+        ));
+    }
+    if catalog.get(b"StructTreeRoot").is_ok() {
+        warnings.push(format!(
+            "{label}: the tagged-PDF structure tree cannot be safely preserved during page assembly"
+        ));
+    }
+    if catalog.get(b"OCProperties").is_ok() {
+        warnings.push(format!(
+            "{label}: optional-content layer controls may not be preserved"
+        ));
+    }
+    if catalog.get(b"OpenAction").is_ok() || catalog.get(b"AA").is_ok() {
+        warnings.push(format!(
+            "{label}: document-level open/additional actions are omitted"
+        ));
+    }
+
+    warnings
+}
+
+fn materialize_inherited_page_attributes(document: &mut Document, page_id: ObjectId) -> Result<()> {
+    const INHERITED_KEYS: &[&[u8]] = &[
+        b"Resources",
+        b"MediaBox",
+        b"CropBox",
+        b"BleedBox",
+        b"TrimBox",
+        b"ArtBox",
+        b"Rotate",
+        b"UserUnit",
+    ];
+
+    let page = document
+        .get_dictionary(page_id)
+        .context("selected PDF page is not a dictionary")?;
+    let mut missing = INHERITED_KEYS
+        .iter()
+        .copied()
+        .filter(|key| page.get(key).is_err())
+        .collect::<Vec<_>>();
+    let mut parent = page.get(b"Parent").and_then(Object::as_reference).ok();
+    let mut inherited = Vec::new();
+    let mut visited = Vec::new();
+
+    while let Some(parent_id) = parent {
+        if visited.contains(&parent_id) {
+            bail!("selected PDF has a cyclic page tree");
+        }
+        visited.push(parent_id);
+        let parent_dictionary = document
+            .get_dictionary(parent_id)
+            .context("selected PDF has an invalid page parent")?;
+        let mut found = Vec::new();
+        for key in &missing {
+            if let Ok(value) = parent_dictionary.get(key) {
+                inherited.push((key.to_vec(), value.clone()));
+                found.push(*key);
+            }
+        }
+        missing.retain(|key| !found.contains(key));
+        if missing.is_empty() {
+            break;
+        }
+        parent = parent_dictionary
+            .get(b"Parent")
+            .and_then(Object::as_reference)
+            .ok();
+    }
+
+    let page = document
+        .get_dictionary_mut(page_id)
+        .context("could not update selected PDF page")?;
+    for (key, value) in inherited {
+        page.set(key, value);
+    }
+    Ok(())
+}
+
+fn disable_unsafe_internal_links(document: &mut Document, page_id: ObjectId) -> Result<usize> {
+    let annotations = document
+        .get_dictionary(page_id)
+        .ok()
+        .and_then(|page| page.get(b"Annots").ok())
+        .cloned();
+    let mut referenced_annotations = Vec::new();
+    let mut rewritten = 0;
+
+    match annotations {
+        Some(Object::Array(mut annotations)) => {
+            rewritten += rewrite_annotation_array(
+                document,
+                &mut annotations,
+                page_id,
+                &mut referenced_annotations,
+            );
+            document
+                .get_dictionary_mut(page_id)
+                .context("could not update selected PDF annotations")?
+                .set("Annots", Object::Array(annotations));
+        }
+        Some(Object::Reference(array_id)) => {
+            if let Some(Object::Array(mut annotations)) = document.objects.get(&array_id).cloned() {
+                rewritten += rewrite_annotation_array(
+                    document,
+                    &mut annotations,
+                    page_id,
+                    &mut referenced_annotations,
+                );
+                document.set_object(array_id, Object::Array(annotations));
+            }
+        }
+        _ => {}
+    }
+
+    for annotation_id in referenced_annotations {
+        let decision = document
+            .get_dictionary(annotation_id)
+            .ok()
+            .map(|annotation| link_rewrite_decision(document, annotation, page_id));
+        if let Some((remove_destination, remove_action)) = decision
+            && (remove_destination || remove_action)
+        {
+            rewrite_link_dictionary(
+                document
+                    .get_dictionary_mut(annotation_id)
+                    .context("could not update a link annotation")?,
+                remove_destination,
+                remove_action,
+            );
+            rewritten += 1;
+        }
+    }
+    Ok(rewritten)
+}
+
+fn rewrite_annotation_array(
+    document: &Document,
+    annotations: &mut [Object],
+    page_id: ObjectId,
+    referenced_annotations: &mut Vec<ObjectId>,
+) -> usize {
+    let mut rewritten = 0;
+    for annotation in annotations {
+        match annotation {
+            Object::Reference(id) => referenced_annotations.push(*id),
+            Object::Dictionary(dictionary) => {
+                let (remove_destination, remove_action) =
+                    link_rewrite_decision(document, dictionary, page_id);
+                if remove_destination || remove_action {
+                    rewrite_link_dictionary(dictionary, remove_destination, remove_action);
+                    rewritten += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    rewritten
+}
+
+fn link_rewrite_decision(
+    document: &Document,
+    annotation: &Dictionary,
+    page_id: ObjectId,
+) -> (bool, bool) {
+    if annotation.get(b"Subtype").and_then(Object::as_name).ok() != Some(b"Link") {
+        return (false, false);
+    }
+    let remove_destination = annotation
+        .get(b"Dest")
+        .ok()
+        .is_some_and(|destination| destination_page(document, destination, 0) != Some(page_id));
+    let remove_action = annotation
+        .get(b"A")
+        .ok()
+        .is_some_and(|action| unsafe_goto_action(document, action, page_id));
+    (remove_destination, remove_action)
+}
+
+fn rewrite_link_dictionary(
+    annotation: &mut Dictionary,
+    remove_destination: bool,
+    remove_action: bool,
+) {
+    if remove_destination {
+        annotation.remove(b"Dest");
+    }
+    if remove_action {
+        annotation.remove(b"A");
+    }
+}
+
+fn unsafe_goto_action(document: &Document, action: &Object, page_id: ObjectId) -> bool {
+    let action = match action {
+        Object::Dictionary(action) => Some(action),
+        Object::Reference(id) => document.get_dictionary(*id).ok(),
+        _ => None,
+    };
+    let Some(action) = action else {
+        return false;
+    };
+    if action.get(b"S").and_then(Object::as_name).ok() != Some(b"GoTo") {
+        return false;
+    }
+    action
+        .get(b"D")
+        .ok()
+        .is_none_or(|destination| destination_page(document, destination, 0) != Some(page_id))
+}
+
+fn destination_page(document: &Document, destination: &Object, depth: usize) -> Option<ObjectId> {
+    if depth > 8 {
+        return None;
+    }
+    match destination {
+        Object::Array(items) => items.first().and_then(|item| item.as_reference().ok()),
+        Object::Reference(id) => {
+            if document.get_pages().values().any(|page_id| page_id == id) {
+                Some(*id)
+            } else {
+                document
+                    .get_object(*id)
+                    .ok()
+                    .and_then(|resolved| destination_page(document, resolved, depth + 1))
+            }
+        }
+        Object::Dictionary(dictionary) => dictionary
+            .get(b"D")
+            .ok()
+            .and_then(|resolved| destination_page(document, resolved, depth + 1)),
+        _ => None,
+    }
+}
 fn retain_single_page(mut document: Document, page_number: u32) -> Result<Document> {
     let pages = document.get_pages();
     if !pages.contains_key(&page_number) {
         bail!("PDF page {page_number} no longer exists");
     }
 
+    let page_id = pages[&page_number];
+    materialize_inherited_page_attributes(&mut document, page_id)?;
     let to_delete = pages
         .keys()
         .copied()
@@ -513,9 +921,13 @@ fn image_page_dimensions(
     }
 }
 
-fn apply_pdf_metadata(document: &mut Document, settings: &ExportSettings) {
+fn apply_pdf_metadata(
+    document: &mut Document,
+    settings: &ExportSettings,
+    source_metadata: Option<&Dictionary>,
+) {
     let metadata = &settings.metadata;
-    let mut info = lopdf::Dictionary::new();
+    let mut info = source_metadata.cloned().unwrap_or_default();
     if !metadata.title.trim().is_empty() {
         info.set("Title", Object::string_literal(metadata.title.trim()));
     }
@@ -532,7 +944,8 @@ fn apply_pdf_metadata(document: &mut Document, settings: &ExportSettings) {
     let info_id = document.add_object(info);
     document.trailer.set("Info", info_id);
 }
-fn merge_documents(documents: Vec<Document>) -> Result<Document> {
+
+fn merge_documents(documents: Vec<PreparedDocument>) -> Result<Document> {
     if documents.is_empty() {
         bail!("there are no documents to merge");
     }
@@ -542,24 +955,37 @@ fn merge_documents(documents: Vec<Document>) -> Result<Document> {
     let mut page_tree_roots = Vec::with_capacity(documents.len());
     let mut total_pages = 0_u32;
 
-    for mut source in documents {
-        source.renumber_objects_with(next_object_id);
-        next_object_id = source.max_id + 1;
-        total_pages += source.get_pages().len() as u32;
+    for prepared in documents {
+        let PreparedDocument {
+            mut document,
+            bookmarks,
+            ..
+        } = prepared;
+        document.renumber_objects_with(next_object_id);
+        next_object_id = document.max_id + 1;
+        total_pages += document.get_pages().len() as u32;
+        let page_id = document
+            .get_pages()
+            .into_values()
+            .next()
+            .context("prepared PDF contains no page")?;
+        for title in bookmarks {
+            output.add_bookmark(Bookmark::new(title, [0.0, 0.0, 0.0], 0, page_id), None);
+        }
 
-        let catalog_id = source
+        let catalog_id = document
             .trailer
             .get(b"Root")
             .and_then(Object::as_reference)
             .context("source PDF has no catalog")?;
-        let pages_id = source
+        let source_pages_id = document
             .get_dictionary(catalog_id)
             .and_then(|catalog| catalog.get(b"Pages"))
             .and_then(Object::as_reference)
             .context("source PDF has no page tree")?;
-        page_tree_roots.push(pages_id);
+        page_tree_roots.push(source_pages_id);
 
-        output.objects.extend(source.objects);
+        output.objects.extend(document.objects);
     }
 
     output.max_id = next_object_id.saturating_sub(1);
@@ -579,11 +1005,15 @@ fn merge_documents(documents: Vec<Document>) -> Result<Document> {
             "Count" => total_pages,
         }),
     );
-    let catalog_id = output.add_object(dictionary! {
+    let mut catalog = dictionary! {
         "Type" => "Catalog",
         "Pages" => pages_id,
         "PageLayout" => "OneColumn",
-    });
+    };
+    if let Some(outlines_id) = output.build_outline() {
+        catalog.set("Outlines", outlines_id);
+    }
+    let catalog_id = output.add_object(catalog);
     output.trailer.set("Root", catalog_id);
     output.prune_objects();
     output.renumber_objects();
@@ -712,7 +1142,7 @@ mod tests {
             ..Default::default()
         };
 
-        apply_pdf_metadata(&mut document, &settings);
+        apply_pdf_metadata(&mut document, &settings, None);
 
         let info_id = document
             .trailer
@@ -763,7 +1193,11 @@ mod tests {
             document
         }
 
-        let merged = merge_documents(vec![blank_document(), blank_document()]).unwrap();
+        let merged = merge_documents(vec![
+            PreparedDocument::plain(blank_document()),
+            PreparedDocument::plain(blank_document()),
+        ])
+        .unwrap();
         assert_eq!(merged.get_pages().len(), 2);
     }
 
@@ -918,5 +1352,186 @@ mod tests {
 
         let _ = fs::remove_file(image_path);
         let _ = fs::remove_file(output_path);
+    }
+
+    #[test]
+    fn materializes_inherited_page_resources_and_boxes_before_pruning() {
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let resources_id =
+            document.add_object(dictionary! { "ProcSet" => vec![Object::Name(b"PDF".to_vec())] });
+        let first_page =
+            document.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id });
+        let second_page =
+            document.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(first_page), Object::Reference(second_page)],
+                "Count" => 2,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "CropBox" => vec![10.into(), 20.into(), 600.into(), 770.into()],
+                "Resources" => resources_id,
+            }),
+        );
+        let catalog_id =
+            document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        document.trailer.set("Root", catalog_id);
+
+        let retained = retain_single_page(document, 2).unwrap();
+        let retained_page = retained.get_dictionary(retained.get_pages()[&1]).unwrap();
+        assert!(retained_page.get(b"MediaBox").is_ok());
+        assert!(retained_page.get(b"CropBox").is_ok());
+        assert_eq!(
+            retained_page
+                .get(b"Resources")
+                .and_then(Object::as_reference)
+                .unwrap(),
+            resources_id
+        );
+    }
+
+    #[test]
+    fn keeps_external_links_and_disables_unmappable_internal_links() {
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let second_page = document.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()],
+        });
+        let uri_link = document.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Link",
+            "Rect" => vec![0.into(), 0.into(), 20.into(), 20.into()],
+            "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal("https://example.com") },
+        });
+        let internal_link = document.add_object(dictionary! {
+            "Type" => "Annot", "Subtype" => "Link",
+            "Rect" => vec![20.into(), 0.into(), 40.into(), 20.into()],
+            "A" => dictionary! {
+                "S" => "GoTo",
+                "D" => vec![Object::Reference(second_page), Object::Name(b"Fit".to_vec())],
+            },
+        });
+        let first_page = document.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()],
+            "Annots" => vec![Object::Reference(uri_link), Object::Reference(internal_link)],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![Object::Reference(first_page), Object::Reference(second_page)],
+                "Count" => 2,
+            }),
+        );
+        let catalog_id =
+            document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+        document.trailer.set("Root", catalog_id);
+
+        assert_eq!(
+            disable_unsafe_internal_links(&mut document, first_page).unwrap(),
+            1
+        );
+        assert!(document.get_dictionary(uri_link).unwrap().get(b"A").is_ok());
+        assert!(
+            document
+                .get_dictionary(internal_link)
+                .unwrap()
+                .get(b"A")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn preserves_source_metadata_unless_export_settings_override_it() {
+        let mut document = Document::with_version("1.7");
+        let mut source = Dictionary::new();
+        source.set("Title", Object::string_literal("Original title"));
+        source.set("Creator", Object::string_literal("Source application"));
+        source.set("Author", Object::string_literal("Original author"));
+        let settings = ExportSettings {
+            metadata: crate::export_settings::PdfMetadata {
+                author: "New author".to_owned(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        apply_pdf_metadata(&mut document, &settings, Some(&source));
+
+        let info_id = document
+            .trailer
+            .get(b"Info")
+            .and_then(Object::as_reference)
+            .unwrap();
+        let info = document.get_dictionary(info_id).unwrap();
+        assert_eq!(
+            info.get(b"Title").and_then(Object::as_str).unwrap(),
+            b"Original title"
+        );
+        assert_eq!(
+            info.get(b"Creator").and_then(Object::as_str).unwrap(),
+            b"Source application"
+        );
+        assert_eq!(
+            info.get(b"Author").and_then(Object::as_str).unwrap(),
+            b"New author"
+        );
+    }
+
+    #[test]
+    fn rebuilds_bookmarks_for_remapped_output_pages_and_warns_about_catalog_data() {
+        let mut document = Document::with_version("1.7");
+        let pages_id = document.new_object_id();
+        let page_id = document.add_object(dictionary! {
+            "Type" => "Page", "Parent" => pages_id,
+            "MediaBox" => vec![0.into(), 0.into(), 300.into(), 400.into()],
+        });
+        document.objects.insert(
+            pages_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![Object::Reference(page_id)], "Count" => 1,
+            }),
+        );
+        let catalog_id = document.add_object(dictionary! {
+            "Type" => "Catalog", "Pages" => pages_id,
+            "AcroForm" => dictionary! {}, "PageLabels" => dictionary! {},
+        });
+        document.trailer.set("Root", catalog_id);
+        document.add_bookmark(
+            Bookmark::new("Chapter one".to_owned(), [0.2, 0.3, 0.4], 2, page_id),
+            None,
+        );
+        let outlines_id = document.build_outline().unwrap();
+        document.catalog_mut().unwrap().set("Outlines", outlines_id);
+        let warnings = catalog_structure_warnings(&document, Path::new("structured.pdf"));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("form fields"))
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("page labels"))
+        );
+        assert!(warnings.iter().any(|warning| warning.contains("bookmarks")));
+
+        let mut preparation_warnings = Vec::new();
+        let prepared = prepare_pdf_page(
+            document,
+            1,
+            Path::new("structured.pdf"),
+            &mut preparation_warnings,
+        )
+        .unwrap();
+        assert_eq!(prepared.bookmarks, vec!["Chapter one"]);
+        let merged = merge_documents(vec![prepared]).unwrap();
+        let output_page_id = merged.get_pages()[&1];
+        assert_eq!(
+            extract_bookmarks_for_page(&merged, output_page_id).unwrap(),
+            vec!["Chapter one"]
+        );
     }
 }
