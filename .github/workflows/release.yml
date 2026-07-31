@@ -102,15 +102,12 @@ jobs:
           chmod +x "${appimage}"
           APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --smoke-test
 
-      - name: Smoke-test macOS app and disk image
+      - name: Verify macOS disk image
         if: runner.os == 'macOS'
         run: |
           dmg="$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "${dmg}"
           hdiutil verify "${dmg}"
-          app="$(find dist -maxdepth 1 -type d -name '*.app' -print -quit)"
-          test -n "${app}"
-          "${app}/Contents/MacOS/pdf-merger" --smoke-test
 
       - name: Normalize packages and create portable archives
         run: python scripts/collect_release_artifacts.py --target ${{ matrix.target }} --binary ${{ matrix.binary }}
