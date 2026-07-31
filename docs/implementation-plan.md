@@ -17,7 +17,7 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 ## Implementation status
 
 - Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, and PDF structure preservation.
-- Next: accessibility, polish, and release readiness.
+- In progress: native distribution and release automation. Next: accessibility, performance, recovery, localization, and packaged-app testing.
 
 ## Delivery milestones
 
@@ -83,15 +83,56 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 - Preserve structures only when references can be remapped safely; warn when an operation necessarily drops or rewrites them.
 - Add fixture-based integration tests covering mixed source PDFs.
 
-### 9. Accessibility, polish, and release readiness
+### 9. Native distribution (`v0.2.0`)
 
-- Complete keyboard navigation, accessible labels, focus states, and high-contrast checks.
-- Add localization-ready user-facing strings.
-- Add crash-safe recovery and optional update notifications.
-- Extend CI with fixture tests and packaged-application smoke tests on Windows, Linux, and macOS.
+- Add source artwork, runtime/window icons, and Windows executable identity metadata.
+- Package Windows x86-64 as NSIS plus portable ZIP, macOS Intel/Apple Silicon as DMG,
+  and Linux x86-64 as AppImage plus portable tarball.
+- Validate that the Cargo version, packager version, changelog, and release tag agree.
+- Build packages on native GitHub runners, smoke-test their binaries, generate checksums and
+  provenance attestations, and publish only after every required target succeeds.
+- Add signing and notarization once protected platform credentials are available.
+
+### 10. Accessibility and input polish (`v0.3.0`)
+
+- Complete keyboard navigation through document groups, page cards, dialogs, and jobs.
+- Add accessible labels, predictable focus order, visible focus states, and non-drag
+  alternatives for every operation.
+- Test high contrast, light/dark themes, display scaling, and screen-reader output.
+
+### 11. Large-document performance (`v0.4.0`)
+
+- Benchmark 100, 500, and 1,000-page workspaces before optimization.
+- Virtualize page cards, load visible previews first, cancel stale work, and bound texture
+  cache size and background concurrency.
+- Track import latency, scrolling frame time, memory, export time, and cancellation latency.
+
+### 12. Crash recovery and data integrity (`v0.5.0`)
+
+- Add versioned, password-free recovery snapshots written with debounce and atomic replacement.
+- Offer restore/inspect/discard after an unclean shutdown and make normal project saves atomic.
+- Test corruption, disk-full, read-only, missing-source, and interrupted-write paths.
+
+### 13. Localization and optional updates (`v0.6.0`)
+
+- Move user-facing text into a typed message catalog and add a pseudo-locale.
+- Add an opt-in, privacy-respecting update check using only public release metadata.
+- Keep offline use unchanged and never send document data or local paths.
+
+### 14. UI, fixture, and packaged-application testing (`v0.7.0`)
+
+- Add redistributable fixtures for PDF structures, encryption, malformed inputs, mixed page
+  sizes, and project migrations.
+- Add interaction tests for editing, transfer, recovery, dirty prompts, and keyboard navigation.
+- Install/extract and smoke-test every native package before release publication.
+- Maintain a release checklist covering versions, changelog, notices, audits, checksums,
+  attestations, rollback, and stable-release promotion.
+
+Undo/redo, project persistence, multi-page selection, and the documented shortcuts are already
+implemented. Future milestones add regression and accessibility coverage rather than rebuilding
+those capabilities.
 
 ## Engineering rules
-
 - Each milestone must compile and test independently.
 - Model/document behavior gets unit or fixture tests before UI wiring is considered complete.
 - Background workers communicate through typed messages; they never mutate GUI state directly.

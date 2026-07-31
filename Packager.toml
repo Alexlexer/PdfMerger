@@ -1,0 +1,30 @@
+name = "pdf-merger"
+product-name = "PdfMerger"
+version = "0.2.0"
+identifier = "io.github.alexlexer.PdfMerger"
+description = "An offline native desktop app for visually arranging, merging, splitting, and editing PDFs."
+long-description = "PdfMerger processes PDF files and images locally. Arrange pages visually, transfer pages between documents, split selections, and export without uploading documents."
+homepage = "https://github.com/Alexlexer/PdfMerger"
+authors = ["Alexlexer"]
+publisher = "Alexlexer"
+license-file = "LICENSE"
+copyright = "Copyright (c) 2026 Alexlexer"
+category = "Utility"
+icons = [
+  "assets/icons/icon-32.png",
+  "assets/icons/icon-128.png",
+  "assets/icons/icon-256.png",
+  "assets/icons/icon-512.png",
+  "assets/icons/icon.ico",
+  "assets/icons/icon.icns",
+]
+resources = ["README.md", "THIRD_PARTY_LICENSES.html"]
+binaries-dir = "target/release"
+out-dir = "dist"
+
+[[binaries]]
+path = "pdf-merger"
+main = true
+
+[linux]
+generate-desktop-entry = true

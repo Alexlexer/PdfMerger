@@ -1,6 +1,6 @@
 [package]
 name = "pdf-merger"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 description = "A native desktop PDF merger and image-to-PDF arranger"
 license = "MIT"
@@ -46,3 +46,6 @@ zeroize = "1.9.0"
 [profile.release]
 lto = "thin"
 strip = true
+
+[target."cfg(windows)".build-dependencies]
+winresource = "0.1.31"

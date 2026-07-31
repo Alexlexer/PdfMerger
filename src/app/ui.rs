@@ -250,6 +250,11 @@ impl PdfMergerApp {
                                 .small()
                                 .color(Color32::from_gray(145)),
                         );
+                        ui.label(
+                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                .small()
+                                .color(Color32::from_gray(110)),
+                        );
                         if has_diagnostics && ui.small_button("Details").clicked() {
                             open_details = true;
                         }

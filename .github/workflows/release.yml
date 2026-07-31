@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - Packager.toml
+      - build.rs
+      - assets/**
+      - scripts/**
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate release metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate version and assets
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: python scripts/validate_release.py
+      - name: Validate release tag, version, and assets
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: python scripts/validate_release.py --tag "${GITHUB_REF_NAME}"
+
+  package:
+    name: Package ${{ matrix.target }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x86_64
+            os: windows-latest
+            format: nsis
+            binary: target/release/pdf-merger.exe
+          - target: linux-x86_64
+            os: ubuntu-24.04
+            format: appimage
+            binary: target/release/pdf-merger
+          - target: macos-x86_64
+            os: macos-15-intel
+            format: dmg
+            binary: target/release/pdf-merger
+          - target: macos-aarch64
+            os: macos-15
+            format: dmg
+            binary: target/release/pdf-merger
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Install Linux desktop and packaging dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxkbcommon-dev libwayland-dev libfuse2
+
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --version 0.11.8 --locked
+
+      - name: Build release application
+        run: cargo build --release --locked
+
+      - name: Smoke-test release binary
+        run: ${{ matrix.binary }} --smoke-test
+
+      - name: Build native package
+        run: cargo packager --release --formats ${{ matrix.format }}
+
+      - name: Smoke-test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -LiteralPath dist -Filter '*setup.exe' | Select-Object -First 1
+          if (-not $installer) { throw 'NSIS installer was not produced' }
+          Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
+          $installed = Join-Path $env:LOCALAPPDATA 'PdfMerger\pdf-merger.exe'
+          & $installed --smoke-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Start-Process -FilePath (Join-Path $env:LOCALAPPDATA 'PdfMerger\uninstall.exe') -ArgumentList '/S' -Wait
+
+      - name: Smoke-test Linux AppImage
+        if: runner.os == 'Linux'
+        run: |
+          appimage="$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          test -n "${appimage}"
+          chmod +x "${appimage}"
+          APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --smoke-test
+
+      - name: Smoke-test macOS disk image
+        if: runner.os == 'macOS'
+        run: |
+          dmg="$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
+          test -n "${dmg}"
+          mount="$(mktemp -d)"
+          cleanup() { hdiutil detach "${mount}" || true; rmdir "${mount}" || true; }
+          trap cleanup EXIT
+          hdiutil attach "${dmg}" -mountpoint "${mount}" -nobrowse
+          app="$(find "${mount}" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          test -n "${app}"
+          "${app}/Contents/MacOS/pdf-merger" --smoke-test
+
+      - name: Normalize packages and create portable archives
+        run: python scripts/collect_release_artifacts.py --target ${{ matrix.target }} --binary ${{ matrix.binary }}
+
+      - name: Upload release candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-${{ matrix.target }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download native packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: package-*
+          path: release
+          merge-multiple: true
+      - name: Generate checksums and release notes
+        run: |
+          cd release
+          sha256sum PdfMerger-* > SHA256SUMS
+          cd ..
+          python scripts/release_notes.py --version "${GITHUB_REF_NAME#v}" --output release-notes.md
+      - name: Attest release artifacts
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4.2.1
+        with:
+          subject-path: release/*
+      - name: Create and publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --draft --title "PdfMerger ${GITHUB_REF_NAME}" --notes-file release-notes.md
+          else
+            gh release create "${GITHUB_REF_NAME}" --verify-tag --draft --title "PdfMerger ${GITHUB_REF_NAME}" --notes-file release-notes.md
+          fi
+          gh release upload "${GITHUB_REF_NAME}" release/* --clobber
+          gh release edit "${GITHUB_REF_NAME}" --draft=false
