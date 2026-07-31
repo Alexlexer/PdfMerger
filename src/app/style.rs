@@ -1,6 +1,7 @@
-use eframe::egui::{self, Color32, CornerRadius, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, Stroke, Vec2};
 
 pub(super) const ACCENT: Color32 = Color32::from_rgb(94, 106, 210);
+pub(super) const FOCUS: Color32 = Color32::from_rgb(255, 211, 92);
 pub(super) const CARD_WIDTH: f32 = 166.0;
 pub(super) const CARD_MARGIN: f32 = 10.0;
 pub(super) const CARD_SPACING: f32 = 10.0;
@@ -15,5 +16,9 @@ pub(super) fn configure(context: &egui::Context) {
         style.visuals.widgets.inactive.corner_radius = CornerRadius::same(7);
         style.visuals.widgets.hovered.corner_radius = CornerRadius::same(7);
         style.visuals.widgets.active.corner_radius = CornerRadius::same(7);
+        style.visuals.selection.stroke = Stroke::new(2.0, FOCUS);
+        style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.5, FOCUS);
+        style.visuals.widgets.active.bg_stroke = Stroke::new(2.0, FOCUS);
+        style.spacing.interact_size.y = style.spacing.interact_size.y.max(30.0);
     });
 }

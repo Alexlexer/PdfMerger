@@ -27,11 +27,22 @@ enum CardAction {
 enum GroupAction {
     ToggleCollapse(u64),
     ToggleSelection(u64),
+    MoveSelectedHere(u64),
     Rotate(u64),
     Remove(u64),
     Export(u64),
     MoveUp(usize),
     MoveDown(usize),
+}
+
+#[derive(Clone, Copy)]
+struct GroupHeaderState {
+    index: usize,
+    count: usize,
+    collapsed: bool,
+    all_selected: bool,
+    source_count: usize,
+    can_receive_selection: bool,
 }
 
 impl PdfMergerApp {
@@ -58,6 +69,9 @@ impl PdfMergerApp {
                         .map(|page| page.source.path())
                         .collect::<HashSet<_>>()
                         .len();
+                    let can_receive_selection = pages
+                        .iter()
+                        .any(|page| self.selected.contains(&page.id) && page.group_id != group.id);
 
                     let (_group_zone, group_drop) = ui.dnd_drop_zone::<usize, _>(
                         Frame::new()
@@ -69,11 +83,14 @@ impl PdfMergerApp {
                             if let Some(action) = group_header(
                                 ui,
                                 group,
-                                group_index,
-                                groups.len(),
-                                collapsed,
-                                all_selected,
-                                source_count,
+                                GroupHeaderState {
+                                    index: group_index,
+                                    count: groups.len(),
+                                    collapsed,
+                                    all_selected,
+                                    source_count,
+                                    can_receive_selection,
+                                },
                             ) {
                                 group_action = Some(action);
                             }
@@ -253,6 +270,18 @@ impl PdfMergerApp {
                         self.selected.extend(ids);
                     }
                 }
+                GroupAction::MoveSelectedHere(group_id) => {
+                    let moved = self.workspace.move_ids_to_group(&self.selected, group_id);
+                    if moved > 0 {
+                        self.retain_existing_selection();
+                        self.set_status(
+                            format!(
+                                "Transferred {moved} selected page(s) into the document group."
+                            ),
+                            false,
+                        );
+                    }
+                }
                 GroupAction::Rotate(group_id) => {
                     let ids = self.workspace.group_page_ids(group_id);
                     let rotated = self.workspace.rotate_ids_clockwise(&ids);
@@ -305,11 +334,7 @@ fn drag_edge_scroll_velocity(pointer_y: f32, viewport: egui::Rect) -> f32 {
 fn group_header(
     ui: &mut egui::Ui,
     group: &PageGroup,
-    group_index: usize,
-    group_count: usize,
-    collapsed: bool,
-    all_selected: bool,
-    source_count: usize,
+    state: GroupHeaderState,
 ) -> Option<GroupAction> {
     let mut action = None;
     let file_name = group
@@ -319,11 +344,15 @@ fn group_header(
         .unwrap_or("Source document");
     ui.horizontal_wrapped(|ui| {
         if ui
-            .small_button(if collapsed { "▶" } else { "▼" })
-            .on_hover_text(if collapsed {
-                "Expand group"
+            .small_button(if state.collapsed {
+                "Expand"
             } else {
-                "Collapse group"
+                "Collapse"
+            })
+            .on_hover_text(if state.collapsed {
+                "Expand this document group"
+            } else {
+                "Collapse this document group"
             })
             .clicked()
         {
@@ -335,15 +364,15 @@ fn group_header(
                 .small()
                 .color(Color32::from_gray(145)),
         );
-        if source_count > 1 {
+        if state.source_count > 1 {
             ui.label(
-                RichText::new(format!("mixed from {source_count} sources"))
+                RichText::new(format!("mixed from {} sources", state.source_count))
                     .small()
                     .color(Color32::from_rgb(232, 181, 92)),
             );
         }
         if ui
-            .small_button(if all_selected {
+            .small_button(if state.all_selected {
                 "Deselect group"
             } else {
                 "Select group"
@@ -353,6 +382,16 @@ fn group_header(
             action = Some(GroupAction::ToggleSelection(group.id));
         }
 
+        if ui
+            .add_enabled(
+                state.can_receive_selection,
+                egui::Button::new("Move selection here"),
+            )
+            .on_hover_text("Transfer selected pages into this document group")
+            .clicked()
+        {
+            action = Some(GroupAction::MoveSelectedHere(group.id));
+        }
         if ui.small_button("Export group").clicked() {
             action = Some(GroupAction::Export(group.id));
         }
@@ -360,19 +399,19 @@ fn group_header(
             action = Some(GroupAction::Rotate(group.id));
         }
         if ui
-            .add_enabled(group_index > 0, egui::Button::new("Move up"))
+            .add_enabled(state.index > 0, egui::Button::new("Move up"))
             .clicked()
         {
-            action = Some(GroupAction::MoveUp(group_index));
+            action = Some(GroupAction::MoveUp(state.index));
         }
         if ui
             .add_enabled(
-                group_index + 1 < group_count,
+                state.index + 1 < state.count,
                 egui::Button::new("Move down"),
             )
             .clicked()
         {
-            action = Some(GroupAction::MoveDown(group_index));
+            action = Some(GroupAction::MoveDown(state.index));
         }
         if ui
             .small_button(RichText::new("Remove group").color(Color32::from_rgb(244, 118, 118)))
@@ -410,21 +449,16 @@ fn page_card(
     ui.horizontal(|ui| {
         let mut checked = selected;
         if ui
-            .checkbox(&mut checked, "")
-            .on_hover_text("Select this page")
+            .toggle_value(&mut checked, format!("Page {:02}", index + 1))
+            .on_hover_text(format!("Select page {}: {}", index + 1, page.title))
             .changed()
         {
             action = Some(CardAction::ToggleSelection(page.id));
         }
-        ui.label(
-            RichText::new(format!("{:02}", index + 1))
-                .strong()
-                .color(super::style::ACCENT),
-        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if ui
-                .small_button("×")
-                .on_hover_text("Remove this page")
+                .small_button("Remove")
+                .on_hover_text(format!("Remove page {}: {}", index + 1, page.title))
                 .clicked()
             {
                 action = Some(CardAction::Remove(index));
@@ -496,13 +530,18 @@ fn page_card(
     });
     ui.add_space(5.0);
     ui.horizontal(|ui| {
-        if ui.button("↻").on_hover_text("Rotate clockwise").clicked() {
+        if ui
+            .button("Rotate")
+            .on_hover_text(format!("Rotate page {} clockwise", index + 1))
+            .clicked()
+        {
             action = Some(CardAction::Rotate(page.id));
         }
         if ui
             .add_enabled(
                 index > group_start,
-                egui::Button::new(RichText::new("Back").strong()).min_size(Vec2::new(48.0, 28.0)),
+                egui::Button::new(RichText::new("Earlier").strong())
+                    .min_size(Vec2::new(48.0, 28.0)),
             )
             .on_hover_text("Move page backward within this group")
             .clicked()
@@ -512,7 +551,7 @@ fn page_card(
         if ui
             .add_enabled(
                 index + 1 < group_end && index + 1 < page_count,
-                egui::Button::new(RichText::new("Next").strong()).min_size(Vec2::new(48.0, 28.0)),
+                egui::Button::new(RichText::new("Later").strong()).min_size(Vec2::new(48.0, 28.0)),
             )
             .on_hover_text("Move page forward within this group")
             .clicked()

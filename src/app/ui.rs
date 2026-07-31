@@ -77,7 +77,7 @@ impl PdfMergerApp {
                         ui.heading("Arrange pages");
                         ui.label(
                             RichText::new(
-                                "Drag pages to reorder them or move them between document cards",
+                                "Drag pages or use the labeled controls to reorder and transfer them",
                             )
                             .color(Color32::from_gray(145)),
                         );
@@ -170,7 +170,7 @@ impl PdfMergerApp {
             ui.add_space(12.0);
             ui.heading("Drop PDFs and pictures here");
             ui.label(
-                RichText::new("Each PDF page and image becomes a draggable page card.")
+                RichText::new("Each PDF page and image becomes an accessible page card.")
                     .color(Color32::from_gray(160)),
             );
             ui.add_space(18.0);
