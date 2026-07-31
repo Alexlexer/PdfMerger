@@ -77,6 +77,7 @@ pub(crate) struct JobManager {
     active: BTreeMap<JobId, JobState>,
     diagnostics: VecDeque<Diagnostic>,
     details_open: bool,
+    details_focus_requested: bool,
 }
 
 impl JobManager {
@@ -149,6 +150,11 @@ impl JobManager {
 
     pub(crate) fn open_details(&mut self) {
         self.details_open = true;
+        self.details_focus_requested = true;
+    }
+
+    pub(crate) fn details_are_open(&self) -> bool {
+        self.details_open
     }
 
     pub(crate) fn record(
@@ -193,33 +199,39 @@ impl JobManager {
         let mut open = self.details_open;
         let mut clear = false;
         let mut details = self.details_text();
-        egui::Window::new("Warnings and errors")
-            .id(egui::Id::new("job_diagnostics"))
-            .open(&mut open)
-            .default_width(620.0)
-            .default_height(420.0)
-            .show(context, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(format!("{} diagnostic(s)", self.diagnostics.len()))
-                            .color(Color32::from_gray(155)),
-                    );
-                    if ui.button("Copy all").clicked() {
-                        ui.ctx().copy_text(details.clone());
-                    }
-                    if ui.button("Clear").clicked() {
-                        clear = true;
-                    }
-                });
-                ui.separator();
-                ui.add(
-                    egui::TextEdit::multiline(&mut details)
-                        .code_editor()
-                        .desired_width(f32::INFINITY)
-                        .desired_rows(20)
-                        .interactive(false),
+        let modal = egui::Modal::new(egui::Id::new("job_diagnostics")).show(context, |ui| {
+            ui.set_width(620.0);
+            ui.heading("Warnings and errors");
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{} diagnostic(s)", self.diagnostics.len()))
+                        .color(Color32::from_gray(155)),
                 );
+                let copy_all = ui.button("Copy all");
+                if self.details_focus_requested {
+                    copy_all.request_focus();
+                    self.details_focus_requested = false;
+                }
+                if copy_all.clicked() {
+                    ui.ctx().copy_text(details.clone());
+                }
+                if ui.button("Clear").clicked() {
+                    clear = true;
+                }
             });
+            ui.separator();
+            ui.add(
+                egui::TextEdit::multiline(&mut details)
+                    .code_editor()
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(20)
+                    .interactive(false),
+            );
+        });
+        if modal.should_close() {
+            open = false;
+        }
         if clear {
             self.diagnostics.clear();
         }

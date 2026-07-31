@@ -87,7 +87,7 @@ Imports, exports, split operations, and project restoration run outside the UI t
 - `Ctrl/Cmd+Y` or `Ctrl/Cmd+Shift+Z`: redo
 - `R`: rotate selected pages clockwise
 - `Delete`: remove selected pages
-- `Escape`: clear the selection
+- `Escape`: close the active dialog, or clear the page selection when no dialog is open
 - `Tab` / `Shift+Tab`: move through menus, group controls, page controls, dialogs, and jobs
 - `Enter` / `Space`: activate the focused control
 

@@ -6,6 +6,10 @@ use super::PdfMergerApp;
 
 impl PdfMergerApp {
     pub(super) fn handle_shortcuts(&mut self, context: &egui::Context) {
+        if !self.global_shortcuts_allowed(context) {
+            return;
+        }
+
         let command = |key| KeyboardShortcut::new(Modifiers::COMMAND, key);
         let command_shift = Modifiers {
             command: true,

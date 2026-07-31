@@ -8,13 +8,16 @@ This checklist records the current keyboard behavior and the manual checks requi
 
 1. Use **Tab** and **Shift+Tab** to move through the menu bar, document-group controls,
    page controls, dialogs, active jobs, and diagnostic actions.
-2. Use **Enter** or **Space** to activate the focused control.
-3. Select pages with each page's labeled **Page NN** toggle.
-4. Transfer selected pages without dragging by activating **Move selection here** on the
+2. Use **Enter** or **Space** to activate the focused control. In a modal, **Enter** runs the
+   primary action and **Escape** cancels it.
+3. Modal dialogs block the workspace, keep keyboard focus inside the dialog, set an appropriate
+   initial focus target, and return focus to the control that opened them.
+4. Select pages with each page's labeled **Page NN** toggle.
+5. Transfer selected pages without dragging by activating **Move selection here** on the
    destination document group.
-5. Reorder pages with **Earlier** and **Later**, and reorder groups with **Move up** and
+6. Reorder pages with **Earlier** and **Later**, and reorder groups with **Move up** and
    **Move down**.
-6. Use the documented global shortcuts for selection, rotation, deletion, undo/redo,
+7. Use the documented global shortcuts for selection, rotation, deletion, undo/redo,
    import, project open/save, and export.
 
 ## Manual release checks
