@@ -11,7 +11,6 @@ when all required targets succeed.
 | --- | --- | --- | --- |
 | Windows | x86-64 | NSIS installer | ZIP |
 | Linux | x86-64 | AppImage | `.tar.gz` |
-| macOS | Intel | DMG | — |
 | macOS | Apple Silicon | DMG | — |
 
 The packages are unsigned until protected Windows and Apple signing credentials

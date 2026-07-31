@@ -31,8 +31,8 @@ there is no browser UI, web server, upload, or cloud processing.
 ## Downloads
 
 Starting with v0.2.0, GitHub Releases provides a Windows x86-64 installer and
-portable ZIP, macOS DMGs for Intel and Apple Silicon, and a Linux x86-64 AppImage
-and portable archive. Packages include SHA-256 checksums and GitHub build-provenance
+portable ZIP, an Apple Silicon macOS DMG, and a Linux x86-64 AppImage and portable
+archive. Packages include SHA-256 checksums and GitHub build-provenance
 attestations.
 
 Download releases from the [GitHub Releases page](https://github.com/Alexlexer/PdfMerger/releases).

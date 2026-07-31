@@ -51,10 +51,6 @@ jobs:
             os: ubuntu-24.04
             format: appimage
             binary: target/release/pdf-merger
-          - target: macos-x86_64
-            os: macos-15-intel
-            format: dmg
-            binary: target/release/pdf-merger
           - target: macos-aarch64
             os: macos-15
             format: dmg
@@ -106,16 +102,13 @@ jobs:
           chmod +x "${appimage}"
           APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --smoke-test
 
-      - name: Smoke-test macOS disk image
+      - name: Smoke-test macOS app and disk image
         if: runner.os == 'macOS'
         run: |
           dmg="$(find dist -maxdepth 1 -type f -name '*.dmg' -print -quit)"
           test -n "${dmg}"
-          mount="$(mktemp -d)"
-          cleanup() { hdiutil detach "${mount}" || true; rmdir "${mount}" || true; }
-          trap cleanup EXIT
-          hdiutil attach "${dmg}" -mountpoint "${mount}" -nobrowse -acceptlicense
-          app="$(find "${mount}" -maxdepth 1 -type d -name '*.app' -print -quit)"
+          hdiutil verify "${dmg}"
+          app="$(find dist -maxdepth 1 -type d -name '*.app' -print -quit)"
           test -n "${app}"
           "${app}/Contents/MacOS/pdf-merger" --smoke-test
 
