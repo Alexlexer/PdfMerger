@@ -26,6 +26,13 @@ pub(crate) struct PasswordRequest {
 pub(crate) struct PasswordPromptState {
     queue: VecDeque<PasswordRequest>,
     password: Zeroizing<String>,
+    focus_requested: bool,
+}
+
+impl PasswordPromptState {
+    pub(crate) fn is_open(&self) -> bool {
+        !self.queue.is_empty()
+    }
 }
 
 impl PdfMergerApp {
@@ -49,6 +56,7 @@ impl PdfMergerApp {
                 .any(|queued| queued.path == request.path)
             {
                 self.password_prompt.queue.push_back(request);
+                self.password_prompt.focus_requested = true;
             }
         }
     }
@@ -59,63 +67,68 @@ impl PdfMergerApp {
         };
         let mut submit = false;
         let mut cancel = false;
-        egui::Window::new("Unlock protected PDF")
-            .id(egui::Id::new("pdf_password_prompt"))
-            .collapsible(false)
-            .resizable(false)
-            .default_width(430.0)
-            .show(context, |ui| {
-                ui.label(RichText::new(request.path.display().to_string()).strong());
-                ui.label(
-                    RichText::new(match &request.error {
-                        PdfAccessError::PasswordRequired => "Enter the PDF password.",
-                        PdfAccessError::IncorrectPassword => {
-                            "That password was incorrect. Please try again."
-                        }
-                        PdfAccessError::OwnerPasswordRequired => {
-                            "This PDF forbids page assembly. Enter its owner password."
-                        }
-                        PdfAccessError::UnsupportedEncryption(error) => error,
-                    })
-                    .color(
-                        if matches!(request.error, PdfAccessError::PasswordRequired) {
-                            Color32::from_gray(190)
-                        } else {
-                            Color32::from_rgb(244, 118, 118)
-                        },
-                    ),
-                );
-                ui.add_space(8.0);
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut *self.password_prompt.password)
-                        .password(true)
-                        .hint_text("Password")
-                        .desired_width(f32::INFINITY),
-                );
-                ui.label(
-                    RichText::new(
-                        "The password is kept only in memory for this application session.",
-                    )
+        let modal = egui::Modal::new(egui::Id::new("pdf_password_prompt")).show(context, |ui| {
+            ui.set_width(430.0);
+            ui.heading("Unlock protected PDF");
+            ui.separator();
+            ui.label(RichText::new(request.path.display().to_string()).strong());
+            ui.label(
+                RichText::new(match &request.error {
+                    PdfAccessError::PasswordRequired => "Enter the PDF password.",
+                    PdfAccessError::IncorrectPassword => {
+                        "That password was incorrect. Please try again."
+                    }
+                    PdfAccessError::OwnerPasswordRequired => {
+                        "This PDF forbids page assembly. Enter its owner password."
+                    }
+                    PdfAccessError::UnsupportedEncryption(error) => error,
+                })
+                .color(
+                    if matches!(request.error, PdfAccessError::PasswordRequired) {
+                        Color32::from_gray(190)
+                    } else {
+                        Color32::from_rgb(244, 118, 118)
+                    },
+                ),
+            );
+            ui.add_space(8.0);
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut *self.password_prompt.password)
+                    .password(true)
+                    .hint_text("Password")
+                    .desired_width(f32::INFINITY),
+            );
+            if self.password_prompt.focus_requested {
+                response.request_focus();
+                self.password_prompt.focus_requested = false;
+            }
+            ui.label(
+                RichText::new("The password is kept only in memory for this application session.")
                     .small()
                     .color(Color32::from_gray(145)),
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    if ui.button(RichText::new("Unlock").strong()).clicked()
-                        || (response.lost_focus()
-                            && ui.input(|input| input.key_pressed(egui::Key::Enter)))
-                    {
-                        submit = true;
-                    }
-                });
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                if ui.button(RichText::new("Unlock").strong()).clicked() {
+                    submit = true;
+                }
             });
+        });
+        if modal.should_close() {
+            cancel = true;
+        } else if context
+            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            submit = true;
+        }
 
         if cancel {
             self.password_prompt.queue.pop_front();
             self.password_prompt.password.zeroize();
+            self.password_prompt.focus_requested = !self.password_prompt.queue.is_empty();
             self.set_status(
                 format!("Skipped protected PDF {}.", request.path.display()),
                 true,
@@ -123,6 +136,7 @@ impl PdfMergerApp {
         } else if submit {
             self.password_prompt.queue.pop_front();
             let password = std::mem::take(&mut *self.password_prompt.password);
+            self.password_prompt.focus_requested = !self.password_prompt.queue.is_empty();
             self.pdf_passwords
                 .insert(request.path.clone(), Zeroizing::new(password));
             match request.purpose {

@@ -14,6 +14,7 @@ pub(crate) struct ExportDialogState {
     target: ExportTarget,
     draft: ExportSettings,
     error: Option<String>,
+    focus_requested: bool,
 }
 
 impl ExportDialogState {
@@ -23,7 +24,12 @@ impl ExportDialogState {
             target: ExportTarget::AllPages,
             draft: settings,
             error: None,
+            focus_requested: false,
         }
+    }
+
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
     }
 }
 
@@ -41,6 +47,7 @@ impl PdfMergerApp {
         self.export_dialog.draft = self.export_settings.clone();
         self.export_dialog.error = None;
         self.export_dialog.open = true;
+        self.export_dialog.focus_requested = true;
     }
 
     pub(super) fn show_export_dialog(&mut self, context: &egui::Context) {
@@ -51,166 +58,171 @@ impl PdfMergerApp {
             &mut self.export_dialog,
             ExportDialogState::new(self.export_settings.clone()),
         );
-        let mut open = dialog.open;
         let mut cancel = false;
         let mut export = false;
 
-        egui::Window::new("Export PDF")
-            .id(egui::Id::new("export_settings_dialog"))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(480.0)
-            .show(context, |ui| {
-                ui.label(RichText::new("Optimization preset").strong());
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(dialog.draft.preset == ExportPreset::Lossless, "Lossless")
-                        .on_hover_text("No image downsampling; lossless Flate compression")
-                        .clicked()
-                    {
-                        dialog.draft.apply_preset(ExportPreset::Lossless);
-                    }
-                    if ui
-                        .selectable_label(dialog.draft.preset == ExportPreset::Balanced, "Balanced")
-                        .on_hover_text("Good visual quality with moderate downsampling")
-                        .clicked()
-                    {
-                        dialog.draft.apply_preset(ExportPreset::Balanced);
-                    }
-                    if ui
-                        .selectable_label(
-                            dialog.draft.preset == ExportPreset::SmallerFile,
-                            "Smaller file",
-                        )
-                        .on_hover_text("More downsampling and JPEG compression")
-                        .clicked()
-                    {
-                        dialog.draft.apply_preset(ExportPreset::SmallerFile);
-                    }
-                });
+        let modal = egui::Modal::new(egui::Id::new("export_settings_dialog")).show(context, |ui| {
+            ui.set_width(480.0);
+            ui.heading("Export PDF");
+            ui.separator();
+            ui.label(RichText::new("Optimization preset").strong());
+            ui.horizontal(|ui| {
+                let lossless = ui
+                    .selectable_label(dialog.draft.preset == ExportPreset::Lossless, "Lossless")
+                    .on_hover_text("No image downsampling; lossless Flate compression");
+                if dialog.focus_requested {
+                    lossless.request_focus();
+                    dialog.focus_requested = false;
+                }
+                if lossless.clicked() {
+                    dialog.draft.apply_preset(ExportPreset::Lossless);
+                }
+                if ui
+                    .selectable_label(dialog.draft.preset == ExportPreset::Balanced, "Balanced")
+                    .on_hover_text("Good visual quality with moderate downsampling")
+                    .clicked()
+                {
+                    dialog.draft.apply_preset(ExportPreset::Balanced);
+                }
+                if ui
+                    .selectable_label(
+                        dialog.draft.preset == ExportPreset::SmallerFile,
+                        "Smaller file",
+                    )
+                    .on_hover_text("More downsampling and JPEG compression")
+                    .clicked()
+                {
+                    dialog.draft.apply_preset(ExportPreset::SmallerFile);
+                }
+            });
 
-                ui.add_space(10.0);
-                ui.label(RichText::new("Image page layout").strong());
-                ui.radio_value(
-                    &mut dialog.draft.image_page_policy,
-                    ImagePagePolicy::A4Auto,
-                    "A4 with automatic orientation",
-                );
-                ui.radio_value(
-                    &mut dialog.draft.image_page_policy,
-                    ImagePagePolicy::OriginalAtDpi,
-                    "Original dimensions at target DPI",
-                );
-                if dialog.draft.image_page_policy == ImagePagePolicy::OriginalAtDpi {
-                    ui.horizontal(|ui| {
-                        ui.label("DPI");
-                        ui.add(
-                            egui::DragValue::new(&mut dialog.draft.original_dpi)
-                                .range(36.0..=1200.0)
-                                .speed(1.0),
-                        );
-                    });
-                }
-                ui.radio_value(
-                    &mut dialog.draft.image_page_policy,
-                    ImagePagePolicy::Custom,
-                    "Custom page size",
-                );
-                if dialog.draft.image_page_policy == ImagePagePolicy::Custom {
-                    ui.horizontal(|ui| {
-                        ui.label("Width");
-                        ui.add(
-                            egui::DragValue::new(&mut dialog.draft.custom_width_mm)
-                                .range(20.0..=2000.0)
-                                .suffix(" mm"),
-                        );
-                        ui.label("Height");
-                        ui.add(
-                            egui::DragValue::new(&mut dialog.draft.custom_height_mm)
-                                .range(20.0..=2000.0)
-                                .suffix(" mm"),
-                        );
-                    });
-                }
+            ui.add_space(10.0);
+            ui.label(RichText::new("Image page layout").strong());
+            ui.radio_value(
+                &mut dialog.draft.image_page_policy,
+                ImagePagePolicy::A4Auto,
+                "A4 with automatic orientation",
+            );
+            ui.radio_value(
+                &mut dialog.draft.image_page_policy,
+                ImagePagePolicy::OriginalAtDpi,
+                "Original dimensions at target DPI",
+            );
+            if dialog.draft.image_page_policy == ImagePagePolicy::OriginalAtDpi {
                 ui.horizontal(|ui| {
-                    ui.label("Margin");
+                    ui.label("DPI");
                     ui.add(
-                        egui::DragValue::new(&mut dialog.draft.margin_mm)
-                            .range(0.0..=100.0)
+                        egui::DragValue::new(&mut dialog.draft.original_dpi)
+                            .range(36.0..=1200.0)
+                            .speed(1.0),
+                    );
+                });
+            }
+            ui.radio_value(
+                &mut dialog.draft.image_page_policy,
+                ImagePagePolicy::Custom,
+                "Custom page size",
+            );
+            if dialog.draft.image_page_policy == ImagePagePolicy::Custom {
+                ui.horizontal(|ui| {
+                    ui.label("Width");
+                    ui.add(
+                        egui::DragValue::new(&mut dialog.draft.custom_width_mm)
+                            .range(20.0..=2000.0)
+                            .suffix(" mm"),
+                    );
+                    ui.label("Height");
+                    ui.add(
+                        egui::DragValue::new(&mut dialog.draft.custom_height_mm)
+                            .range(20.0..=2000.0)
                             .suffix(" mm"),
                     );
                 });
-
-                ui.add_space(10.0);
-                ui.label(RichText::new("Image optimization").strong());
-                ui.add_enabled(
-                    dialog.draft.preset != ExportPreset::Lossless,
-                    egui::Slider::new(&mut dialog.draft.image_quality, 1..=100).text("Quality"),
+            }
+            ui.horizontal(|ui| {
+                ui.label("Margin");
+                ui.add(
+                    egui::DragValue::new(&mut dialog.draft.margin_mm)
+                        .range(0.0..=100.0)
+                        .suffix(" mm"),
                 );
-                let mut downsample = dialog.draft.max_image_dimension.is_some();
-                if ui
-                    .checkbox(&mut downsample, "Limit maximum image dimension")
-                    .changed()
-                {
-                    dialog.draft.max_image_dimension = downsample.then_some(2400);
-                }
-                if let Some(maximum) = &mut dialog.draft.max_image_dimension {
-                    ui.horizontal(|ui| {
-                        ui.label("Maximum width/height");
-                        ui.add(
-                            egui::DragValue::new(maximum)
-                                .range(256..=20_000)
-                                .suffix(" px"),
-                        );
-                    });
-                }
-                ui.label(
-                    RichText::new(
-                        "Imported PDF pages remain lossless; these controls affect images.",
-                    )
+            });
+
+            ui.add_space(10.0);
+            ui.label(RichText::new("Image optimization").strong());
+            ui.add_enabled(
+                dialog.draft.preset != ExportPreset::Lossless,
+                egui::Slider::new(&mut dialog.draft.image_quality, 1..=100).text("Quality"),
+            );
+            let mut downsample = dialog.draft.max_image_dimension.is_some();
+            if ui
+                .checkbox(&mut downsample, "Limit maximum image dimension")
+                .changed()
+            {
+                dialog.draft.max_image_dimension = downsample.then_some(2400);
+            }
+            if let Some(maximum) = &mut dialog.draft.max_image_dimension {
+                ui.horizontal(|ui| {
+                    ui.label("Maximum width/height");
+                    ui.add(
+                        egui::DragValue::new(maximum)
+                            .range(256..=20_000)
+                            .suffix(" px"),
+                    );
+                });
+            }
+            ui.label(
+                RichText::new("Imported PDF pages remain lossless; these controls affect images.")
                     .small()
                     .color(Color32::from_gray(145)),
-                );
+            );
 
-                ui.add_space(10.0);
-                ui.collapsing("PDF metadata", |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Title");
-                        ui.text_edit_singleline(&mut dialog.draft.metadata.title);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Author");
-                        ui.text_edit_singleline(&mut dialog.draft.metadata.author);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Subject");
-                        ui.text_edit_singleline(&mut dialog.draft.metadata.subject);
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Keywords");
-                        ui.text_edit_singleline(&mut dialog.draft.metadata.keywords);
-                    });
-                });
-
-                if let Some(error) = &dialog.error {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
-                }
-                ui.add_space(12.0);
+            ui.add_space(10.0);
+            ui.collapsing("PDF metadata", |ui| {
                 ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    if ui
-                        .button(RichText::new("Choose output and export").strong())
-                        .clicked()
-                    {
-                        export = true;
-                    }
+                    ui.label("Title");
+                    ui.text_edit_singleline(&mut dialog.draft.metadata.title);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Author");
+                    ui.text_edit_singleline(&mut dialog.draft.metadata.author);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Subject");
+                    ui.text_edit_singleline(&mut dialog.draft.metadata.subject);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Keywords");
+                    ui.text_edit_singleline(&mut dialog.draft.metadata.keywords);
                 });
             });
 
-        dialog.open = open && !cancel;
+            if let Some(error) = &dialog.error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                if ui
+                    .button(RichText::new("Choose output and export").strong())
+                    .clicked()
+                {
+                    export = true;
+                }
+            });
+        });
+
+        if modal.should_close() {
+            cancel = true;
+        } else if context
+            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            export = true;
+        }
+        dialog.open = !cancel;
         if export {
             match dialog.draft.validate() {
                 Err(error) => dialog.error = Some(error.to_string()),

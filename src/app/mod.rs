@@ -12,6 +12,7 @@ use pdf_merger::{
     split::SplitReport,
 };
 
+mod accessibility;
 mod actions;
 mod editing;
 mod export_dialog;
@@ -74,6 +75,7 @@ pub struct PdfMergerApp {
     pub(super) export_dialog: export_dialog::ExportDialogState,
     pub(super) pdf_passwords: HashMap<PathBuf, zeroize::Zeroizing<String>>,
     pub(super) password_prompt: password_ui::PasswordPromptState,
+    modal_focus: accessibility::ModalFocusState,
 }
 
 impl PdfMergerApp {
@@ -101,6 +103,7 @@ impl PdfMergerApp {
             export_dialog,
             pdf_passwords: HashMap::new(),
             password_prompt: password_ui::PasswordPromptState::default(),
+            modal_focus: accessibility::ModalFocusState::default(),
         }
     }
 
@@ -287,6 +290,7 @@ impl eframe::App for PdfMergerApp {
     fn ui(&mut self, root_ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let context = root_ui.ctx().clone();
         self.receive_messages();
+        self.sync_modal_focus(&context);
         self.update_project_chrome(&context);
         self.handle_shortcuts(&context);
 
@@ -305,11 +309,13 @@ impl eframe::App for PdfMergerApp {
         self.top_bar(root_ui, &context);
         self.bottom_bar(root_ui);
         self.central_panel(root_ui, &context);
+        self.sync_modal_focus(&context);
         self.show_export_dialog(&context);
         self.show_split_dialog(&context);
         self.show_project_dialogs(&context);
         self.show_password_prompt(&context);
         self.jobs.show_details(&context);
+        self.sync_modal_focus(&context);
         self.file_drop_overlay(&context);
     }
 }

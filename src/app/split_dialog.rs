@@ -14,6 +14,7 @@ pub(crate) struct SplitDialogState {
     range_spec: String,
     base_name: String,
     error: Option<String>,
+    focus_requested: bool,
 }
 
 impl Default for SplitDialogState {
@@ -24,7 +25,14 @@ impl Default for SplitDialogState {
             range_spec: "1-3, 4-6".to_owned(),
             base_name: "split".to_owned(),
             error: None,
+            focus_requested: false,
         }
+    }
+}
+
+impl SplitDialogState {
+    pub(crate) fn is_open(&self) -> bool {
+        self.open
     }
 }
 
@@ -35,6 +43,7 @@ impl PdfMergerApp {
             return;
         }
         self.split_dialog.open = true;
+        self.split_dialog.focus_requested = true;
         self.split_dialog.range_spec = if self.selected.len() == 1 {
             "1".to_owned()
         } else {
@@ -50,75 +59,82 @@ impl PdfMergerApp {
 
         let selected_count = self.selected.len();
         let mut dialog = std::mem::take(&mut self.split_dialog);
-        let mut open = dialog.open;
         let mut cancel = false;
         let mut request_export = false;
 
-        egui::Window::new("Split selected pages")
-            .id(egui::Id::new("split_dialog"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .default_width(430.0)
-            .show(context, |ui| {
-                ui.label(format!(
-                    "Create multiple PDFs from {selected_count} selected page(s)."
-                ));
-                ui.add_space(8.0);
-                ui.label(RichText::new("Split mode").strong());
-                ui.radio_value(
-                    &mut dialog.mode,
-                    SplitMode::IndividualPages,
-                    "One PDF per page",
-                );
-                ui.radio_value(
-                    &mut dialog.mode,
-                    SplitMode::SourceDocuments,
-                    "One PDF per original source file",
-                );
-                ui.radio_value(&mut dialog.mode, SplitMode::Ranges, "One PDF per range");
+        let modal = egui::Modal::new(egui::Id::new("split_dialog")).show(context, |ui| {
+            ui.set_width(430.0);
+            ui.heading("Split selected pages");
+            ui.separator();
+            ui.label(format!(
+                "Create multiple PDFs from {selected_count} selected page(s)."
+            ));
+            ui.add_space(8.0);
+            ui.label(RichText::new("Split mode").strong());
+            ui.radio_value(
+                &mut dialog.mode,
+                SplitMode::IndividualPages,
+                "One PDF per page",
+            );
+            ui.radio_value(
+                &mut dialog.mode,
+                SplitMode::SourceDocuments,
+                "One PDF per original source file",
+            );
+            ui.radio_value(&mut dialog.mode, SplitMode::Ranges, "One PDF per range");
 
-                if dialog.mode == SplitMode::Ranges {
-                    ui.indent("range_options", |ui| {
-                        ui.label("Positions within the selected pages:");
-                        ui.text_edit_singleline(&mut dialog.range_spec);
-                        ui.label(
-                            RichText::new("Example: 1-3, 5, 7-9")
-                                .small()
-                                .color(Color32::from_gray(145)),
-                        );
-                    });
-                }
-
-                ui.add_space(8.0);
-                ui.label(RichText::new("Base filename").strong());
-                ui.text_edit_singleline(&mut dialog.base_name);
-                ui.label(
-                    RichText::new("Existing files will never be overwritten.")
-                        .small()
-                        .color(Color32::from_gray(145)),
-                );
-
-                if let Some(error) = &dialog.error {
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
-                }
-
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                    if ui
-                        .button(RichText::new("Choose folder and export").strong())
-                        .clicked()
-                    {
-                        request_export = true;
-                    }
+            if dialog.mode == SplitMode::Ranges {
+                ui.indent("range_options", |ui| {
+                    ui.label("Positions within the selected pages:");
+                    ui.text_edit_singleline(&mut dialog.range_spec);
+                    ui.label(
+                        RichText::new("Example: 1-3, 5, 7-9")
+                            .small()
+                            .color(Color32::from_gray(145)),
+                    );
                 });
-            });
+            }
 
-        dialog.open = open && !cancel;
+            ui.add_space(8.0);
+            ui.label(RichText::new("Base filename").strong());
+            let base_name = ui.text_edit_singleline(&mut dialog.base_name);
+            if dialog.focus_requested {
+                base_name.request_focus();
+                dialog.focus_requested = false;
+            }
+            ui.label(
+                RichText::new("Existing files will never be overwritten.")
+                    .small()
+                    .color(Color32::from_gray(145)),
+            );
+
+            if let Some(error) = &dialog.error {
+                ui.add_space(8.0);
+                ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+            }
+
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+                if ui
+                    .button(RichText::new("Choose folder and export").strong())
+                    .clicked()
+                {
+                    request_export = true;
+                }
+            });
+        });
+
+        if modal.should_close() {
+            cancel = true;
+        } else if context
+            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            request_export = true;
+        }
+        dialog.open = !cancel;
         if request_export {
             let pages = self
                 .workspace
