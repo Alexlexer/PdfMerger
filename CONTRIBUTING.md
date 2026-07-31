@@ -24,6 +24,18 @@ Run `cargo fmt --all` before committing. PDF/model behavior should include a
 focused regression test. UI changes should remain responsive and preserve
 keyboard access where practical.
 
+## Release tooling
+
+Release metadata must remain synchronized. Validate it with:
+
+```sh
+python scripts/validate_release.py
+```
+
+Application icons are generated from `assets/icon.svg` by
+`scripts/generate_icons.py`, which requires Pillow. Native package configuration
+lives in `Packager.toml`; the complete maintainer process is documented in
+[docs/releasing.md](docs/releasing.md).
 ## Pull requests
 
 - Keep each pull request focused and describe the user-visible impact.
