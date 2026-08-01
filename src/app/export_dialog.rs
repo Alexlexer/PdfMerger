@@ -1,9 +1,10 @@
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use pdf_merger::export_settings::{ExportPreset, ExportSettings, ImagePagePolicy};
 
 use super::{
     PdfMergerApp,
     accessibility::{AnnouncementPriority, mark_live},
+    style,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -65,7 +66,7 @@ impl PdfMergerApp {
         let mut export = false;
 
         let modal = egui::Modal::new(egui::Id::new("export_settings_dialog")).show(context, |ui| {
-            ui.set_width(480.0);
+            ui.set_width(style::dialog_width(context, 480.0));
             ui.heading("Export PDF");
             ui.separator();
             ui.label(RichText::new("Optimization preset").strong());
@@ -182,7 +183,7 @@ impl PdfMergerApp {
             ui.label(
                 RichText::new("Imported PDF pages remain lossless; these controls affect images.")
                     .small()
-                    .color(Color32::from_gray(145)),
+                    .color(style::muted_text(ui)),
             );
 
             ui.add_space(10.0);
@@ -223,7 +224,7 @@ impl PdfMergerApp {
 
             if let Some(error) = &dialog.error {
                 ui.add_space(8.0);
-                let error = ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+                let error = ui.label(RichText::new(error).color(style::error_text(ui)));
                 mark_live(&error, AnnouncementPriority::Assertive);
             }
             ui.add_space(12.0);

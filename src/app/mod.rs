@@ -76,11 +76,12 @@ pub struct PdfMergerApp {
     pub(super) pdf_passwords: HashMap<PathBuf, zeroize::Zeroizing<String>>,
     pub(super) password_prompt: password_ui::PasswordPromptState,
     modal_focus: accessibility::ModalFocusState,
+    appearance: style::AppearanceSettings,
 }
 
 impl PdfMergerApp {
     pub fn new(creation_context: &eframe::CreationContext<'_>) -> Self {
-        style::configure(&creation_context.egui_ctx);
+        let appearance = style::configure(&creation_context.egui_ctx);
         let (sender, receiver) = mpsc::channel();
         let workspace = Workspace::default();
         let export_settings = ExportSettings::default();
@@ -104,6 +105,7 @@ impl PdfMergerApp {
             pdf_passwords: HashMap::new(),
             password_prompt: password_ui::PasswordPromptState::default(),
             modal_focus: accessibility::ModalFocusState::default(),
+            appearance,
         }
     }
 

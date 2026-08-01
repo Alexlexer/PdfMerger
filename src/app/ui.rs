@@ -1,9 +1,9 @@
-use eframe::egui::{self, Align, Color32, Frame, Id, Layout, Margin, RichText, Stroke, Vec2};
+use eframe::egui::{self, Color32, Frame, Id, Margin, RichText, Stroke, Vec2};
 
 use super::{
     PdfMergerApp,
     accessibility::{AnnouncementPriority, mark_live},
-    style::ACCENT,
+    style::{self, AppearanceSettings, ColorTheme},
 };
 
 impl PdfMergerApp {
@@ -11,79 +11,111 @@ impl PdfMergerApp {
         egui::Panel::top("top_bar")
             .frame(
                 Frame::new()
-                    .fill(Color32::from_rgb(24, 27, 35))
+                    .fill(root_ui.visuals().panel_fill)
                     .inner_margin(Margin::symmetric(22, 14)),
             )
             .show(root_ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label(
                         RichText::new(" P ")
                             .size(22.0)
                             .strong()
-                            .color(Color32::WHITE)
-                            .background_color(ACCENT),
+                            .color(style::accent_text(ui))
+                            .background_color(style::accent(ui)),
                     );
                     ui.add_space(4.0);
                     ui.label(RichText::new("PdfMerger").size(21.0).strong());
                     ui.label(
                         RichText::new("native · private · offline")
                             .small()
-                            .color(Color32::from_gray(150)),
+                            .color(style::muted_text(ui)),
                     );
+                    ui.separator();
 
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let export = egui::Button::new(
-                            RichText::new("Export PDF").strong().color(Color32::WHITE),
-                        )
-                        .fill(ACCENT)
-                        .corner_radius(8);
-                        if ui.add_enabled(!self.workspace.is_empty(), export).clicked() {
-                            self.choose_export_path(context);
-                        }
+                    if ui
+                        .add_enabled(self.workspace.can_undo(), egui::Button::new("Undo"))
+                        .on_hover_text("Undo (Ctrl/Cmd+Z)")
+                        .clicked()
+                    {
+                        self.undo();
+                    }
+                    if ui
+                        .add_enabled(self.workspace.can_redo(), egui::Button::new("Redo"))
+                        .on_hover_text("Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)")
+                        .clicked()
+                    {
+                        self.redo();
+                    }
 
-                        if ui.button("Add files").clicked() {
-                            self.choose_files(context);
-                        }
+                    self.project_menu(ui, context);
+                    self.appearance_menu(ui, context);
 
-                        self.project_menu(ui, context);
+                    if ui.button("Add files").clicked() {
+                        self.choose_files(context);
+                    }
 
-                        if ui
-                            .add_enabled(self.workspace.can_redo(), egui::Button::new("Redo"))
-                            .on_hover_text("Redo (Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z)")
-                            .clicked()
-                        {
-                            self.redo();
-                        }
-                        if ui
-                            .add_enabled(self.workspace.can_undo(), egui::Button::new("Undo"))
-                            .on_hover_text("Undo (Ctrl/Cmd+Z)")
-                            .clicked()
-                        {
-                            self.undo();
-                        }
-                    });
+                    let export = egui::Button::new(
+                        RichText::new("Export PDF")
+                            .strong()
+                            .color(style::accent_text(ui)),
+                    )
+                    .fill(style::accent(ui))
+                    .corner_radius(8);
+                    if ui.add_enabled(!self.workspace.is_empty(), export).clicked() {
+                        self.choose_export_path(context);
+                    }
                 });
             });
+    }
+
+    fn appearance_menu(&mut self, ui: &mut egui::Ui, context: &egui::Context) {
+        let previous = self.appearance;
+        ui.menu_button("View", |ui| {
+            ui.label(RichText::new("Theme").strong());
+            ui.radio_value(&mut self.appearance.theme, ColorTheme::Dark, "Dark");
+            ui.radio_value(&mut self.appearance.theme, ColorTheme::Light, "Light");
+            ui.separator();
+            ui.checkbox(&mut self.appearance.high_contrast, "High contrast");
+            ui.separator();
+            ui.label(RichText::new("UI scale").strong());
+            for zoom in AppearanceSettings::ZOOM_OPTIONS {
+                ui.radio_value(&mut self.appearance.zoom_percent, zoom, format!("{zoom}%"));
+            }
+            ui.separator();
+            if ui.button("Reset appearance").clicked() {
+                self.appearance = AppearanceSettings::default();
+                ui.close();
+            }
+        });
+
+        if self.appearance != previous {
+            self.appearance.apply(context);
+            self.set_status(
+                format!("Appearance changed to {}.", self.appearance.description()),
+                false,
+            );
+            context.request_repaint();
+        }
     }
 
     pub(super) fn central_panel(&mut self, root_ui: &mut egui::Ui, context: &egui::Context) {
         egui::CentralPanel::default()
             .frame(
                 Frame::new()
-                    .fill(Color32::from_rgb(20, 23, 30))
+                    .fill(root_ui.visuals().extreme_bg_color)
                     .inner_margin(Margin::same(22)),
             )
             .show(root_ui, |ui| {
                 if self.workspace.is_empty() {
                     self.empty_state(ui, context);
                 } else {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.heading("Arrange pages");
                         ui.label(
                             RichText::new(
                                 "Drag pages or use the labeled controls to reorder and transfer them",
                             )
-                            .color(Color32::from_gray(145)),
+                            .color(style::muted_text(ui)),
                         );
                     });
                     ui.add_space(10.0);
@@ -96,7 +128,7 @@ impl PdfMergerApp {
 
     fn selection_toolbar(&mut self, ui: &mut egui::Ui) {
         Frame::new()
-            .fill(Color32::from_rgb(28, 31, 40))
+            .fill(ui.visuals().faint_bg_color)
             .corner_radius(8)
             .inner_margin(Margin::symmetric(10, 7))
             .show(ui, |ui| {
@@ -105,9 +137,9 @@ impl PdfMergerApp {
                         RichText::new(format!("{} selected", self.selected.len()))
                             .strong()
                             .color(if self.selected.is_empty() {
-                                Color32::from_gray(145)
+                                style::muted_text(ui)
                             } else {
-                                ACCENT
+                                style::accent(ui)
                             }),
                     );
                     if ui.small_button("Select all").clicked() {
@@ -170,18 +202,18 @@ impl PdfMergerApp {
     fn empty_state(&mut self, ui: &mut egui::Ui, context: &egui::Context) {
         ui.vertical_centered(|ui| {
             ui.add_space(70.0);
-            ui.label(RichText::new("⇩").size(54.0).color(ACCENT));
+            ui.label(RichText::new("⇩").size(54.0).color(style::accent(ui)));
             ui.add_space(12.0);
             ui.heading("Drop PDFs and pictures here");
             ui.label(
                 RichText::new("Each PDF page and image becomes an accessible page card.")
-                    .color(Color32::from_gray(160)),
+                    .color(style::muted_text(ui)),
             );
             ui.add_space(18.0);
             if ui
                 .add(
                     egui::Button::new(RichText::new("Choose files").strong())
-                        .fill(ACCENT)
+                        .fill(style::accent(ui))
                         .corner_radius(8)
                         .min_size(Vec2::new(140.0, 38.0)),
                 )
@@ -193,7 +225,7 @@ impl PdfMergerApp {
             ui.label(
                 RichText::new("PDF · PNG · JPEG · WebP · BMP · GIF · TIFF")
                     .small()
-                    .color(Color32::from_gray(120)),
+                    .color(style::muted_text(ui)),
             );
         });
     }
@@ -207,17 +239,17 @@ impl PdfMergerApp {
         egui::Panel::bottom("status_bar")
             .frame(
                 Frame::new()
-                    .fill(Color32::from_rgb(24, 27, 35))
+                    .fill(root_ui.visuals().panel_fill)
                     .inner_margin(Margin::symmetric(20, 9)),
             )
             .show(root_ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if let Some(job) = &active_job {
                         ui.spinner();
                         let job_status = ui.label(
                             RichText::new(format!("{} — {}", job.title, job.phase.label()))
                                 .small()
-                                .color(Color32::from_gray(190)),
+                                .color(ui.visuals().text_color()),
                         );
                         mark_live(&job_status, AnnouncementPriority::Polite);
                         if job.total > 0 {
@@ -233,7 +265,7 @@ impl PdfMergerApp {
                             ui.label(
                                 RichText::new(&job.detail)
                                     .small()
-                                    .color(Color32::from_gray(145)),
+                                    .color(style::muted_text(ui)),
                             );
                         }
                         if ui
@@ -244,9 +276,9 @@ impl PdfMergerApp {
                         }
                     } else {
                         let status_color = if self.status_is_error {
-                            Color32::from_rgb(244, 118, 118)
+                            style::error_text(ui)
                         } else {
-                            Color32::from_gray(155)
+                            style::muted_text(ui)
                         };
                         let status =
                             ui.label(RichText::new(&self.status).small().color(status_color));
@@ -259,28 +291,27 @@ impl PdfMergerApp {
                             },
                         );
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.separator();
+                    if active_count > 1 {
                         ui.label(
-                            RichText::new(format!("{} page(s)", self.workspace.len()))
+                            RichText::new(format!("{active_count} jobs"))
                                 .small()
-                                .color(Color32::from_gray(145)),
+                                .color(style::muted_text(ui)),
                         );
-                        ui.label(
-                            RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
-                                .small()
-                                .color(Color32::from_gray(110)),
-                        );
-                        if has_diagnostics && ui.small_button("Details").clicked() {
-                            open_details = true;
-                        }
-                        if active_count > 1 {
-                            ui.label(
-                                RichText::new(format!("{active_count} jobs"))
-                                    .small()
-                                    .color(Color32::from_gray(145)),
-                            );
-                        }
-                    });
+                    }
+                    if has_diagnostics && ui.small_button("Details").clicked() {
+                        open_details = true;
+                    }
+                    ui.label(
+                        RichText::new(format!("{} page(s)", self.workspace.len()))
+                            .small()
+                            .color(style::muted_text(ui)),
+                    );
+                    ui.label(
+                        RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                            .small()
+                            .color(style::muted_text(ui)),
+                    );
                 });
             });
         if let Some(job_id) = cancel_job {
@@ -300,11 +331,12 @@ impl PdfMergerApp {
         let rect = context.content_rect();
         let painter =
             context.layer_painter(egui::LayerId::new(egui::Order::Foreground, Id::new("drop")));
+        let accent = context.style_of(context.theme()).visuals.selection.bg_fill;
         painter.rect_filled(rect, 0.0, Color32::from_black_alpha(180));
         painter.rect_stroke(
             rect.shrink(24.0),
             16.0,
-            Stroke::new(3.0, ACCENT),
+            Stroke::new(3.0, accent),
             egui::StrokeKind::Inside,
         );
         painter.text(

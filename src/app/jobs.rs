@@ -6,7 +6,9 @@ use std::{
     },
 };
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
+
+use super::style;
 
 pub(crate) type JobId = u64;
 
@@ -200,13 +202,13 @@ impl JobManager {
         let mut clear = false;
         let mut details = self.details_text();
         let modal = egui::Modal::new(egui::Id::new("job_diagnostics")).show(context, |ui| {
-            ui.set_width(620.0);
+            ui.set_width(style::dialog_width(context, 620.0));
             ui.heading("Warnings and errors");
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(
                     RichText::new(format!("{} diagnostic(s)", self.diagnostics.len()))
-                        .color(Color32::from_gray(155)),
+                        .color(style::muted_text(ui)),
                 );
                 let copy_all = ui.button("Copy all");
                 if self.details_focus_requested {

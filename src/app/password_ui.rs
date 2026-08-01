@@ -3,13 +3,14 @@ use std::{
     path::PathBuf,
 };
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use pdf_merger::document::PdfAccessError;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{
     PdfMergerApp,
     accessibility::{AnnouncementPriority, mark_live},
+    style,
 };
 
 #[derive(Clone, Debug)]
@@ -71,7 +72,7 @@ impl PdfMergerApp {
         let mut submit = false;
         let mut cancel = false;
         let modal = egui::Modal::new(egui::Id::new("pdf_password_prompt")).show(context, |ui| {
-            ui.set_width(430.0);
+            ui.set_width(style::dialog_width(context, 430.0));
             ui.heading("Unlock protected PDF");
             ui.separator();
             ui.label(RichText::new(request.path.display().to_string()).strong());
@@ -88,9 +89,9 @@ impl PdfMergerApp {
                     PdfAccessError::UnsupportedEncryption(error) => error,
                 })
                 .color(if initial_request {
-                    Color32::from_gray(190)
+                    ui.visuals().text_color()
                 } else {
-                    Color32::from_rgb(244, 118, 118)
+                    style::error_text(ui)
                 }),
             );
             mark_live(
@@ -118,7 +119,7 @@ impl PdfMergerApp {
             ui.label(
                 RichText::new("The password is kept only in memory for this application session.")
                     .small()
-                    .color(Color32::from_gray(145)),
+                    .color(style::muted_text(ui)),
             );
             ui.add_space(10.0);
             ui.horizontal(|ui| {

@@ -32,14 +32,23 @@ This checklist records the current keyboard behavior and the manual checks requi
 - Status changes and job progress are polite live announcements. Validation failures, password
   failures, and other errors use assertive announcements.
 
+## Appearance and scaling
+
+Use the **View** menu to switch between **Dark** and **Light**, enable **High contrast**, and
+select a 100%, 125%, 150%, or 200% UI scale. **Reset appearance** returns to dark theme at 100%.
+The top bar, status bar, page groups, cards, and modal widths adapt to narrow logical viewports
+created by larger scale settings.
+
 ## Manual release checks
 
 - Complete import, selection, reorder, transfer, rotation, removal, export, and cancellation
   using only the keyboard.
 - Confirm every interactive control exposes a meaningful text label and enabled/disabled state.
 - Confirm focused, hovered, selected, and destructive controls remain distinguishable.
-- Check the dark theme in the operating system's high-contrast mode.
-- Check layout and focus visibility at 100%, 125%, 150%, and 200% display scaling.
+- Check both light and dark themes with the application's high-contrast option off and on.
+- Repeat the high-contrast checks with the operating system's high-contrast mode enabled.
+- Check layout, wrapping, modal fit, scrolling, and focus visibility at 100%, 125%, 150%, and
+  200% UI scale, including at the minimum supported window size.
 - Verify dialog focus does not escape behind the active modal.
 - Exercise the application with a platform screen reader and record unlabeled or out-of-order
   controls as defects.
