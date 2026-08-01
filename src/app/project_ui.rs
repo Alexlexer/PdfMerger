@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, thread};
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use pdf_merger::{
     export_settings::ExportSettings,
     model::{PageDraft, PageRotation},
@@ -12,6 +12,7 @@ use super::{
     accessibility::label_button,
     jobs::JobPhase,
     password_ui::{PasswordPurpose, PasswordRequest},
+    style,
 };
 
 pub(crate) enum ProjectOpenResult {
@@ -426,13 +427,13 @@ impl PdfMergerApp {
         let mut cancel = false;
         let modal =
             egui::Modal::new(egui::Id::new("discard_project_changes")).show(context, |ui| {
-                ui.set_width(430.0);
+                ui.set_width(style::dialog_width(context, 430.0));
                 ui.heading("Unsaved project changes");
                 ui.separator();
                 ui.label("Save your project before continuing?");
                 ui.label(
                     RichText::new("Unsaved page order, rotation, and removals will be lost.")
-                        .color(Color32::from_gray(150)),
+                        .color(style::muted_text(ui)),
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -480,7 +481,7 @@ impl PdfMergerApp {
             .all(|path| state.replacements.contains_key(path));
         let modal =
             egui::Modal::new(egui::Id::new("missing_project_sources")).show(context, |ui| {
-                ui.set_width(520.0);
+                ui.set_width(style::dialog_width(context, 520.0));
                 ui.heading("Locate missing project sources");
                 ui.separator();
                 ui.label("Choose a replacement for each missing source file.");
@@ -491,7 +492,7 @@ impl PdfMergerApp {
                         if let Some(replacement) = state.replacements.get(missing) {
                             ui.label(
                                 RichText::new(format!("→ {}", replacement.display()))
-                                    .color(Color32::from_rgb(120, 200, 145)),
+                                    .color(style::success_text(ui)),
                             );
                         }
                         let locate_button = ui.small_button("Locate…");

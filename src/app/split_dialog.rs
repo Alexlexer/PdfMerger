@@ -1,6 +1,6 @@
 use std::{fs, thread};
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use pdf_merger::{
     document,
     split::{self, PlannedSplit, SplitMode, SplitReport},
@@ -10,6 +10,7 @@ use super::{
     AppMessage, PdfMergerApp,
     accessibility::{AnnouncementPriority, mark_live},
     jobs::JobPhase,
+    style,
 };
 
 pub(crate) struct SplitDialogState {
@@ -67,7 +68,7 @@ impl PdfMergerApp {
         let mut request_export = false;
 
         let modal = egui::Modal::new(egui::Id::new("split_dialog")).show(context, |ui| {
-            ui.set_width(430.0);
+            ui.set_width(style::dialog_width(context, 430.0));
             ui.heading("Split selected pages");
             ui.separator();
             ui.label(format!(
@@ -98,7 +99,7 @@ impl PdfMergerApp {
                     ui.label(
                         RichText::new("Example: 1-3, 5, 7-9")
                             .small()
-                            .color(Color32::from_gray(145)),
+                            .color(style::muted_text(ui)),
                     );
                 });
             }
@@ -118,12 +119,12 @@ impl PdfMergerApp {
             ui.label(
                 RichText::new("Existing files will never be overwritten.")
                     .small()
-                    .color(Color32::from_gray(145)),
+                    .color(style::muted_text(ui)),
             );
 
             if let Some(error) = &dialog.error {
                 ui.add_space(8.0);
-                let error = ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+                let error = ui.label(RichText::new(error).color(style::error_text(ui)));
                 mark_live(&error, AnnouncementPriority::Assertive);
             }
 

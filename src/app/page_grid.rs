@@ -10,7 +10,7 @@ use super::{
     PdfMergerApp,
     accessibility::{label_button, label_toggle, mark_expanded},
     export_dialog::ExportTarget,
-    style::{CARD_MARGIN, CARD_OUTER_WIDTH, CARD_SPACING, CARD_WIDTH, PREVIEW_SIZE},
+    style::{self, CARD_MARGIN, CARD_OUTER_WIDTH, CARD_SPACING, CARD_WIDTH, PREVIEW_SIZE},
 };
 
 const DRAG_SCROLL_EDGE: f32 = 72.0;
@@ -76,8 +76,8 @@ impl PdfMergerApp {
 
                     let (_group_zone, group_drop) = ui.dnd_drop_zone::<usize, _>(
                         Frame::new()
-                            .fill(Color32::from_rgb(27, 30, 39))
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(53, 59, 73)))
+                            .fill(style::group_fill(ui))
+                            .stroke(style::border(ui))
                             .corner_radius(CornerRadius::same(12))
                             .inner_margin(Margin::same(12)),
                         |ui| {
@@ -112,18 +112,10 @@ impl PdfMergerApp {
                                         for index in group.start..group.end {
                                             let page = &pages[index];
                                             let frame = Frame::new()
-                                                .fill(Color32::from_rgb(35, 39, 49))
-                                                .stroke(Stroke::new(
-                                                    if self.selected.contains(&page.id) {
-                                                        2.0
-                                                    } else {
-                                                        1.0
-                                                    },
-                                                    if self.selected.contains(&page.id) {
-                                                        super::style::ACCENT
-                                                    } else {
-                                                        Color32::from_rgb(57, 63, 78)
-                                                    },
+                                                .fill(style::card_fill(ui))
+                                                .stroke(style::selection_border(
+                                                    ui,
+                                                    self.selected.contains(&page.id),
                                                 ))
                                                 .corner_radius(CornerRadius::same(12))
                                                 .inner_margin(Margin::same(CARD_MARGIN as i8));
@@ -374,13 +366,13 @@ fn group_header(
         ui.label(
             RichText::new(format!("{} page(s)", group.page_count()))
                 .small()
-                .color(Color32::from_gray(145)),
+                .color(style::muted_text(ui)),
         );
         if state.source_count > 1 {
             ui.label(
                 RichText::new(format!("mixed from {} sources", state.source_count))
                     .small()
-                    .color(Color32::from_rgb(232, 181, 92)),
+                    .color(ui.visuals().warn_fg_color),
             );
         }
         let select_group = ui.small_button(if state.all_selected {
@@ -437,7 +429,7 @@ fn group_header(
             action = Some(GroupAction::MoveDown(state.index));
         }
         let remove_group =
-            ui.small_button(RichText::new("Remove group").color(Color32::from_rgb(244, 118, 118)));
+            ui.small_button(RichText::new("Remove group").color(style::error_text(ui)));
         label_button(&remove_group, format!("Remove document group {file_name}"));
         if remove_group.clicked() {
             action = Some(GroupAction::Remove(group.id));
@@ -447,7 +439,7 @@ fn group_header(
         egui::Label::new(
             RichText::new(group.source_path.display().to_string())
                 .small()
-                .color(Color32::from_gray(120)),
+                .color(style::muted_text(ui)),
         )
         .truncate(),
     );
@@ -554,7 +546,7 @@ fn page_card(
             egui::Label::new(
                 RichText::new(&page.title)
                     .strong()
-                    .color(Color32::from_gray(225)),
+                    .color(ui.visuals().text_color()),
             )
             .truncate(),
         )
@@ -563,7 +555,7 @@ fn page_card(
             egui::Label::new(
                 RichText::new(&page.subtitle)
                     .small()
-                    .color(Color32::from_gray(135)),
+                    .color(style::muted_text(ui)),
             )
             .truncate(),
         );
