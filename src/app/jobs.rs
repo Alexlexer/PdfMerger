@@ -221,13 +221,15 @@ impl JobManager {
                 }
             });
             ui.separator();
+            let details_label = ui.label("Diagnostic details");
             ui.add(
                 egui::TextEdit::multiline(&mut details)
                     .code_editor()
                     .desired_width(f32::INFINITY)
                     .desired_rows(20)
                     .interactive(false),
-            );
+            )
+            .labelled_by(details_label.id);
         });
         if modal.should_close() {
             open = false;

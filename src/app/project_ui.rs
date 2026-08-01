@@ -9,6 +9,7 @@ use pdf_merger::{
 
 use super::{
     AppMessage, PdfMergerApp,
+    accessibility::label_button,
     jobs::JobPhase,
     password_ui::{PasswordPurpose, PasswordRequest},
 };
@@ -494,6 +495,10 @@ impl PdfMergerApp {
                             );
                         }
                         let locate_button = ui.small_button("Locate…");
+                        label_button(
+                            &locate_button,
+                            format!("Locate replacement for {}", missing.display()),
+                        );
                         if self.project_ui.missing_focus_requested {
                             locate_button.request_focus();
                             self.project_ui.missing_focus_requested = false;

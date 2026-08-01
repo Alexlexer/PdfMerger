@@ -1,6 +1,47 @@
-use eframe::egui::{Context, Id};
+use eframe::egui::{self, Context, Id, Response};
 
 use super::PdfMergerApp;
+
+#[derive(Clone, Copy)]
+pub(super) enum AnnouncementPriority {
+    Polite,
+    Assertive,
+}
+
+pub(super) fn mark_live(response: &Response, priority: AnnouncementPriority) {
+    let live = match priority {
+        AnnouncementPriority::Polite => egui::accesskit::Live::Polite,
+        AnnouncementPriority::Assertive => egui::accesskit::Live::Assertive,
+    };
+    response
+        .ctx
+        .accesskit_node_builder(response.id, |node| node.set_live(live));
+}
+
+pub(super) fn mark_expanded(response: &Response, expanded: bool) {
+    response
+        .ctx
+        .accesskit_node_builder(response.id, |node| node.set_expanded(expanded));
+}
+
+pub(super) fn label_button(response: &Response, label: impl Into<String>) {
+    let label = label.into();
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, response.enabled(), label.clone())
+    });
+}
+
+pub(super) fn label_toggle(response: &Response, selected: bool, label: impl Into<String>) {
+    let label = label.into();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            response.enabled(),
+            selected,
+            label.clone(),
+        )
+    });
+}
 
 #[derive(Default)]
 pub(super) struct ModalFocusState {

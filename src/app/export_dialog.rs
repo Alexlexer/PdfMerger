@@ -1,7 +1,10 @@
 use eframe::egui::{self, Color32, RichText};
 use pdf_merger::export_settings::{ExportPreset, ExportSettings, ImagePagePolicy};
 
-use super::PdfMergerApp;
+use super::{
+    PdfMergerApp,
+    accessibility::{AnnouncementPriority, mark_live},
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum ExportTarget {
@@ -110,12 +113,13 @@ impl PdfMergerApp {
             );
             if dialog.draft.image_page_policy == ImagePagePolicy::OriginalAtDpi {
                 ui.horizontal(|ui| {
-                    ui.label("DPI");
+                    let label = ui.label("DPI");
                     ui.add(
                         egui::DragValue::new(&mut dialog.draft.original_dpi)
                             .range(36.0..=1200.0)
                             .speed(1.0),
-                    );
+                    )
+                    .labelled_by(label.id);
                 });
             }
             ui.radio_value(
@@ -125,27 +129,30 @@ impl PdfMergerApp {
             );
             if dialog.draft.image_page_policy == ImagePagePolicy::Custom {
                 ui.horizontal(|ui| {
-                    ui.label("Width");
+                    let width_label = ui.label("Width");
                     ui.add(
                         egui::DragValue::new(&mut dialog.draft.custom_width_mm)
                             .range(20.0..=2000.0)
                             .suffix(" mm"),
-                    );
-                    ui.label("Height");
+                    )
+                    .labelled_by(width_label.id);
+                    let height_label = ui.label("Height");
                     ui.add(
                         egui::DragValue::new(&mut dialog.draft.custom_height_mm)
                             .range(20.0..=2000.0)
                             .suffix(" mm"),
-                    );
+                    )
+                    .labelled_by(height_label.id);
                 });
             }
             ui.horizontal(|ui| {
-                ui.label("Margin");
+                let label = ui.label("Margin");
                 ui.add(
                     egui::DragValue::new(&mut dialog.draft.margin_mm)
                         .range(0.0..=100.0)
                         .suffix(" mm"),
-                );
+                )
+                .labelled_by(label.id);
             });
 
             ui.add_space(10.0);
@@ -163,12 +170,13 @@ impl PdfMergerApp {
             }
             if let Some(maximum) = &mut dialog.draft.max_image_dimension {
                 ui.horizontal(|ui| {
-                    ui.label("Maximum width/height");
+                    let label = ui.label("Maximum width/height");
                     ui.add(
                         egui::DragValue::new(maximum)
                             .range(256..=20_000)
                             .suffix(" px"),
-                    );
+                    )
+                    .labelled_by(label.id);
                 });
             }
             ui.label(
@@ -180,26 +188,43 @@ impl PdfMergerApp {
             ui.add_space(10.0);
             ui.collapsing("PDF metadata", |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Title");
-                    ui.text_edit_singleline(&mut dialog.draft.metadata.title);
+                    let label = ui.label("Title");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.draft.metadata.title)
+                            .hint_text("Optional title"),
+                    )
+                    .labelled_by(label.id);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Author");
-                    ui.text_edit_singleline(&mut dialog.draft.metadata.author);
+                    let label = ui.label("Author");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.draft.metadata.author)
+                            .hint_text("Optional author"),
+                    )
+                    .labelled_by(label.id);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Subject");
-                    ui.text_edit_singleline(&mut dialog.draft.metadata.subject);
+                    let label = ui.label("Subject");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.draft.metadata.subject)
+                            .hint_text("Optional subject"),
+                    )
+                    .labelled_by(label.id);
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Keywords");
-                    ui.text_edit_singleline(&mut dialog.draft.metadata.keywords);
+                    let label = ui.label("Keywords");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.draft.metadata.keywords)
+                            .hint_text("Optional keywords"),
+                    )
+                    .labelled_by(label.id);
                 });
             });
 
             if let Some(error) = &dialog.error {
                 ui.add_space(8.0);
-                ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+                let error = ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+                mark_live(&error, AnnouncementPriority::Assertive);
             }
             ui.add_space(12.0);
             ui.horizontal(|ui| {
