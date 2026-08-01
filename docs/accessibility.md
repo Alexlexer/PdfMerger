@@ -20,6 +20,18 @@ This checklist records the current keyboard behavior and the manual checks requi
 7. Use the documented global shortcuts for selection, rotation, deletion, undo/redo,
    import, project open/save, and export.
 
+## Screen-reader support
+
+- Form controls in export, split, password, and diagnostics dialogs are programmatically
+  associated with descriptive labels.
+- Page and document-group actions include the affected page or source name instead of relying
+  only on nearby visual context.
+- Page-selection controls expose their selected state, while document-group disclosure controls
+  expose their expanded or collapsed state.
+- Page previews have text alternatives based on page number and title.
+- Status changes and job progress are polite live announcements. Validation failures, password
+  failures, and other errors use assertive announcements.
+
 ## Manual release checks
 
 - Complete import, selection, reorder, transfer, rotation, removal, export, and cancellation
@@ -31,6 +43,7 @@ This checklist records the current keyboard behavior and the manual checks requi
 - Verify dialog focus does not escape behind the active modal.
 - Exercise the application with a platform screen reader and record unlabeled or out-of-order
   controls as defects.
+- Confirm live announcements do not repeat excessively during long imports or exports.
 
 Automated model tests cover the mutations behind these controls. Screen-reader output and
 platform high-contrast behavior remain manual checks until an appropriate GUI harness is added.

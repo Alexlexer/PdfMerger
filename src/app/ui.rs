@@ -1,6 +1,10 @@
 use eframe::egui::{self, Align, Color32, Frame, Id, Layout, Margin, RichText, Stroke, Vec2};
 
-use super::{PdfMergerApp, style::ACCENT};
+use super::{
+    PdfMergerApp,
+    accessibility::{AnnouncementPriority, mark_live},
+    style::ACCENT,
+};
 
 impl PdfMergerApp {
     pub(super) fn top_bar(&mut self, root_ui: &mut egui::Ui, context: &egui::Context) {
@@ -210,18 +214,20 @@ impl PdfMergerApp {
                 ui.horizontal(|ui| {
                     if let Some(job) = &active_job {
                         ui.spinner();
-                        ui.label(
+                        let job_status = ui.label(
                             RichText::new(format!("{} — {}", job.title, job.phase.label()))
                                 .small()
                                 .color(Color32::from_gray(190)),
                         );
+                        mark_live(&job_status, AnnouncementPriority::Polite);
                         if job.total > 0 {
                             let fraction = job.completed as f32 / job.total as f32;
-                            ui.add(
+                            let progress = ui.add(
                                 egui::ProgressBar::new(fraction)
                                     .desired_width(130.0)
                                     .text(format!("{} / {}", job.completed, job.total)),
                             );
+                            mark_live(&progress, AnnouncementPriority::Polite);
                         }
                         if !job.detail.is_empty() {
                             ui.label(
@@ -242,7 +248,16 @@ impl PdfMergerApp {
                         } else {
                             Color32::from_gray(155)
                         };
-                        ui.label(RichText::new(&self.status).small().color(status_color));
+                        let status =
+                            ui.label(RichText::new(&self.status).small().color(status_color));
+                        mark_live(
+                            &status,
+                            if self.status_is_error {
+                                AnnouncementPriority::Assertive
+                            } else {
+                                AnnouncementPriority::Polite
+                            },
+                        );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(

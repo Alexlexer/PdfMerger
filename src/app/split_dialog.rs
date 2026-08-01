@@ -6,7 +6,11 @@ use pdf_merger::{
     split::{self, PlannedSplit, SplitMode, SplitReport},
 };
 
-use super::{AppMessage, PdfMergerApp, jobs::JobPhase};
+use super::{
+    AppMessage, PdfMergerApp,
+    accessibility::{AnnouncementPriority, mark_live},
+    jobs::JobPhase,
+};
 
 pub(crate) struct SplitDialogState {
     open: bool,
@@ -85,8 +89,12 @@ impl PdfMergerApp {
 
             if dialog.mode == SplitMode::Ranges {
                 ui.indent("range_options", |ui| {
-                    ui.label("Positions within the selected pages:");
-                    ui.text_edit_singleline(&mut dialog.range_spec);
+                    let label = ui.label("Positions within the selected pages:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut dialog.range_spec)
+                            .hint_text("For example: 1-3, 5, 7-9"),
+                    )
+                    .labelled_by(label.id);
                     ui.label(
                         RichText::new("Example: 1-3, 5, 7-9")
                             .small()
@@ -96,8 +104,13 @@ impl PdfMergerApp {
             }
 
             ui.add_space(8.0);
-            ui.label(RichText::new("Base filename").strong());
-            let base_name = ui.text_edit_singleline(&mut dialog.base_name);
+            let base_name_label = ui.label(RichText::new("Base filename").strong());
+            let base_name = ui
+                .add(
+                    egui::TextEdit::singleline(&mut dialog.base_name)
+                        .hint_text("Base filename for generated PDFs"),
+                )
+                .labelled_by(base_name_label.id);
             if dialog.focus_requested {
                 base_name.request_focus();
                 dialog.focus_requested = false;
@@ -110,7 +123,8 @@ impl PdfMergerApp {
 
             if let Some(error) = &dialog.error {
                 ui.add_space(8.0);
-                ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+                let error = ui.label(RichText::new(error).color(Color32::from_rgb(244, 118, 118)));
+                mark_live(&error, AnnouncementPriority::Assertive);
             }
 
             ui.add_space(12.0);

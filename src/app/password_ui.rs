@@ -7,7 +7,10 @@ use eframe::egui::{self, Color32, RichText};
 use pdf_merger::document::PdfAccessError;
 use zeroize::{Zeroize, Zeroizing};
 
-use super::PdfMergerApp;
+use super::{
+    PdfMergerApp,
+    accessibility::{AnnouncementPriority, mark_live},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) enum PasswordPurpose {
@@ -72,7 +75,8 @@ impl PdfMergerApp {
             ui.heading("Unlock protected PDF");
             ui.separator();
             ui.label(RichText::new(request.path.display().to_string()).strong());
-            ui.label(
+            let initial_request = matches!(request.error, PdfAccessError::PasswordRequired);
+            let message = ui.label(
                 RichText::new(match &request.error {
                     PdfAccessError::PasswordRequired => "Enter the PDF password.",
                     PdfAccessError::IncorrectPassword => {
@@ -83,21 +87,30 @@ impl PdfMergerApp {
                     }
                     PdfAccessError::UnsupportedEncryption(error) => error,
                 })
-                .color(
-                    if matches!(request.error, PdfAccessError::PasswordRequired) {
-                        Color32::from_gray(190)
-                    } else {
-                        Color32::from_rgb(244, 118, 118)
-                    },
-                ),
+                .color(if initial_request {
+                    Color32::from_gray(190)
+                } else {
+                    Color32::from_rgb(244, 118, 118)
+                }),
+            );
+            mark_live(
+                &message,
+                if initial_request {
+                    AnnouncementPriority::Polite
+                } else {
+                    AnnouncementPriority::Assertive
+                },
             );
             ui.add_space(8.0);
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut *self.password_prompt.password)
-                    .password(true)
-                    .hint_text("Password")
-                    .desired_width(f32::INFINITY),
-            );
+            let password_label = ui.label("Password");
+            let response = ui
+                .add(
+                    egui::TextEdit::singleline(&mut *self.password_prompt.password)
+                        .password(true)
+                        .hint_text("PDF password")
+                        .desired_width(f32::INFINITY),
+                )
+                .labelled_by(password_label.id);
             if self.password_prompt.focus_requested {
                 response.request_focus();
                 self.password_prompt.focus_requested = false;
