@@ -8,8 +8,9 @@ use pdf_merger::model::{PageGroup, PageItem, PageRotation};
 
 use super::{
     PdfMergerApp,
+    accessibility::{label_button, label_toggle, mark_expanded},
     export_dialog::ExportTarget,
-    style::{CARD_MARGIN, CARD_OUTER_WIDTH, CARD_SPACING, CARD_WIDTH, PREVIEW_SIZE},
+    style::{self, CARD_MARGIN, CARD_OUTER_WIDTH, CARD_SPACING, CARD_WIDTH, PREVIEW_SIZE},
 };
 
 const DRAG_SCROLL_EDGE: f32 = 72.0;
@@ -27,11 +28,22 @@ enum CardAction {
 enum GroupAction {
     ToggleCollapse(u64),
     ToggleSelection(u64),
+    MoveSelectedHere(u64),
     Rotate(u64),
     Remove(u64),
     Export(u64),
     MoveUp(usize),
     MoveDown(usize),
+}
+
+#[derive(Clone, Copy)]
+struct GroupHeaderState {
+    index: usize,
+    count: usize,
+    collapsed: bool,
+    all_selected: bool,
+    source_count: usize,
+    can_receive_selection: bool,
 }
 
 impl PdfMergerApp {
@@ -58,22 +70,28 @@ impl PdfMergerApp {
                         .map(|page| page.source.path())
                         .collect::<HashSet<_>>()
                         .len();
+                    let can_receive_selection = pages
+                        .iter()
+                        .any(|page| self.selected.contains(&page.id) && page.group_id != group.id);
 
                     let (_group_zone, group_drop) = ui.dnd_drop_zone::<usize, _>(
                         Frame::new()
-                            .fill(Color32::from_rgb(27, 30, 39))
-                            .stroke(Stroke::new(1.0, Color32::from_rgb(53, 59, 73)))
+                            .fill(style::group_fill(ui))
+                            .stroke(style::border(ui))
                             .corner_radius(CornerRadius::same(12))
                             .inner_margin(Margin::same(12)),
                         |ui| {
                             if let Some(action) = group_header(
                                 ui,
                                 group,
-                                group_index,
-                                groups.len(),
-                                collapsed,
-                                all_selected,
-                                source_count,
+                                GroupHeaderState {
+                                    index: group_index,
+                                    count: groups.len(),
+                                    collapsed,
+                                    all_selected,
+                                    source_count,
+                                    can_receive_selection,
+                                },
                             ) {
                                 group_action = Some(action);
                             }
@@ -94,18 +112,10 @@ impl PdfMergerApp {
                                         for index in group.start..group.end {
                                             let page = &pages[index];
                                             let frame = Frame::new()
-                                                .fill(Color32::from_rgb(35, 39, 49))
-                                                .stroke(Stroke::new(
-                                                    if self.selected.contains(&page.id) {
-                                                        2.0
-                                                    } else {
-                                                        1.0
-                                                    },
-                                                    if self.selected.contains(&page.id) {
-                                                        super::style::ACCENT
-                                                    } else {
-                                                        Color32::from_rgb(57, 63, 78)
-                                                    },
+                                                .fill(style::card_fill(ui))
+                                                .stroke(style::selection_border(
+                                                    ui,
+                                                    self.selected.contains(&page.id),
                                                 ))
                                                 .corner_radius(CornerRadius::same(12))
                                                 .inner_margin(Margin::same(CARD_MARGIN as i8));
@@ -253,6 +263,18 @@ impl PdfMergerApp {
                         self.selected.extend(ids);
                     }
                 }
+                GroupAction::MoveSelectedHere(group_id) => {
+                    let moved = self.workspace.move_ids_to_group(&self.selected, group_id);
+                    if moved > 0 {
+                        self.retain_existing_selection();
+                        self.set_status(
+                            format!(
+                                "Transferred {moved} selected page(s) into the document group."
+                            ),
+                            false,
+                        );
+                    }
+                }
                 GroupAction::Rotate(group_id) => {
                     let ids = self.workspace.group_page_ids(group_id);
                     let rotated = self.workspace.rotate_ids_clockwise(&ids);
@@ -305,11 +327,7 @@ fn drag_edge_scroll_velocity(pointer_y: f32, viewport: egui::Rect) -> f32 {
 fn group_header(
     ui: &mut egui::Ui,
     group: &PageGroup,
-    group_index: usize,
-    group_count: usize,
-    collapsed: bool,
-    all_selected: bool,
-    source_count: usize,
+    state: GroupHeaderState,
 ) -> Option<GroupAction> {
     let mut action = None;
     let file_name = group
@@ -318,66 +336,102 @@ fn group_header(
         .and_then(|name| name.to_str())
         .unwrap_or("Source document");
     ui.horizontal_wrapped(|ui| {
-        if ui
-            .small_button(if collapsed { "▶" } else { "▼" })
-            .on_hover_text(if collapsed {
-                "Expand group"
+        let collapse = ui
+            .small_button(if state.collapsed {
+                "Expand"
             } else {
-                "Collapse group"
+                "Collapse"
             })
-            .clicked()
-        {
+            .on_hover_text(if state.collapsed {
+                "Expand this document group"
+            } else {
+                "Collapse this document group"
+            });
+        label_button(
+            &collapse,
+            format!(
+                "{} document group {file_name}",
+                if state.collapsed {
+                    "Expand"
+                } else {
+                    "Collapse"
+                }
+            ),
+        );
+        mark_expanded(&collapse, !state.collapsed);
+        if collapse.clicked() {
             action = Some(GroupAction::ToggleCollapse(group.id));
         }
         ui.label(RichText::new(file_name).strong().size(16.0));
         ui.label(
             RichText::new(format!("{} page(s)", group.page_count()))
                 .small()
-                .color(Color32::from_gray(145)),
+                .color(style::muted_text(ui)),
         );
-        if source_count > 1 {
+        if state.source_count > 1 {
             ui.label(
-                RichText::new(format!("mixed from {source_count} sources"))
+                RichText::new(format!("mixed from {} sources", state.source_count))
                     .small()
-                    .color(Color32::from_rgb(232, 181, 92)),
+                    .color(ui.visuals().warn_fg_color),
             );
         }
-        if ui
-            .small_button(if all_selected {
-                "Deselect group"
-            } else {
-                "Select group"
-            })
-            .clicked()
-        {
+        let select_group = ui.small_button(if state.all_selected {
+            "Deselect group"
+        } else {
+            "Select group"
+        });
+        label_toggle(
+            &select_group,
+            state.all_selected,
+            format!("Select document group {file_name}"),
+        );
+        if select_group.clicked() {
             action = Some(GroupAction::ToggleSelection(group.id));
         }
 
-        if ui.small_button("Export group").clicked() {
+        let move_selection = ui
+            .add_enabled(
+                state.can_receive_selection,
+                egui::Button::new("Move selection here"),
+            )
+            .on_hover_text("Transfer selected pages into this document group");
+        label_button(
+            &move_selection,
+            format!("Move selected pages to document group {file_name}"),
+        );
+        if move_selection.clicked() {
+            action = Some(GroupAction::MoveSelectedHere(group.id));
+        }
+        let export_group = ui.small_button("Export group");
+        label_button(&export_group, format!("Export document group {file_name}"));
+        if export_group.clicked() {
             action = Some(GroupAction::Export(group.id));
         }
-        if ui.small_button("Rotate group ↻").clicked() {
+        let rotate_group = ui.small_button("Rotate group ↻");
+        label_button(
+            &rotate_group,
+            format!("Rotate document group {file_name} clockwise"),
+        );
+        if rotate_group.clicked() {
             action = Some(GroupAction::Rotate(group.id));
         }
-        if ui
-            .add_enabled(group_index > 0, egui::Button::new("Move up"))
-            .clicked()
-        {
-            action = Some(GroupAction::MoveUp(group_index));
+        let move_up = ui.add_enabled(state.index > 0, egui::Button::new("Move up"));
+        label_button(&move_up, format!("Move document group {file_name} earlier"));
+        if move_up.clicked() {
+            action = Some(GroupAction::MoveUp(state.index));
         }
-        if ui
-            .add_enabled(
-                group_index + 1 < group_count,
-                egui::Button::new("Move down"),
-            )
-            .clicked()
-        {
-            action = Some(GroupAction::MoveDown(group_index));
+        let move_down = ui.add_enabled(
+            state.index + 1 < state.count,
+            egui::Button::new("Move down"),
+        );
+        label_button(&move_down, format!("Move document group {file_name} later"));
+        if move_down.clicked() {
+            action = Some(GroupAction::MoveDown(state.index));
         }
-        if ui
-            .small_button(RichText::new("Remove group").color(Color32::from_rgb(244, 118, 118)))
-            .clicked()
-        {
+        let remove_group =
+            ui.small_button(RichText::new("Remove group").color(style::error_text(ui)));
+        label_button(&remove_group, format!("Remove document group {file_name}"));
+        if remove_group.clicked() {
             action = Some(GroupAction::Remove(group.id));
         }
     });
@@ -385,7 +439,7 @@ fn group_header(
         egui::Label::new(
             RichText::new(group.source_path.display().to_string())
                 .small()
-                .color(Color32::from_gray(120)),
+                .color(style::muted_text(ui)),
         )
         .truncate(),
     );
@@ -409,24 +463,28 @@ fn page_card(
     ui.set_width(CARD_WIDTH);
     ui.horizontal(|ui| {
         let mut checked = selected;
-        if ui
-            .checkbox(&mut checked, "")
-            .on_hover_text("Select this page")
-            .changed()
-        {
+        let page_toggle = ui
+            .toggle_value(&mut checked, format!("Page {:02}", index + 1))
+            .on_hover_text(format!("Select page {}: {}", index + 1, page.title));
+        label_toggle(
+            &page_toggle,
+            selected,
+            format!("Select page {}: {}", index + 1, page.title),
+        );
+        if page_toggle.changed() {
             action = Some(CardAction::ToggleSelection(page.id));
         }
-        ui.label(
-            RichText::new(format!("{:02}", index + 1))
-                .strong()
-                .color(super::style::ACCENT),
-        );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if ui
-                .small_button("×")
-                .on_hover_text("Remove this page")
-                .clicked()
-            {
+            let remove = ui.small_button("Remove").on_hover_text(format!(
+                "Remove page {}: {}",
+                index + 1,
+                page.title
+            ));
+            label_button(
+                &remove,
+                format!("Remove page {}: {}", index + 1, page.title),
+            );
+            if remove.clicked() {
                 action = Some(CardAction::Remove(index));
             }
         });
@@ -435,7 +493,15 @@ fn page_card(
 
     ui.dnd_drag_source(Id::new(("page_drag", page.id)), index, |ui| {
         ui.set_width(CARD_WIDTH);
-        let (preview_rect, _) = ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
+        let (preview_rect, preview_response) =
+            ui.allocate_exact_size(PREVIEW_SIZE, egui::Sense::hover());
+        preview_response.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Image,
+                true,
+                format!("Preview of page {}: {}", index + 1, page.title),
+            )
+        });
         ui.painter().rect_filled(preview_rect, 5.0, Color32::WHITE);
         ui.painter().rect_stroke(
             preview_rect,
@@ -480,7 +546,7 @@ fn page_card(
             egui::Label::new(
                 RichText::new(&page.title)
                     .strong()
-                    .color(Color32::from_gray(225)),
+                    .color(ui.visuals().text_color()),
             )
             .truncate(),
         )
@@ -489,34 +555,48 @@ fn page_card(
             egui::Label::new(
                 RichText::new(&page.subtitle)
                     .small()
-                    .color(Color32::from_gray(135)),
+                    .color(style::muted_text(ui)),
             )
             .truncate(),
         );
     });
     ui.add_space(5.0);
     ui.horizontal(|ui| {
-        if ui.button("↻").on_hover_text("Rotate clockwise").clicked() {
+        let rotate = ui
+            .button("Rotate")
+            .on_hover_text(format!("Rotate page {} clockwise", index + 1));
+        label_button(
+            &rotate,
+            format!("Rotate page {} clockwise: {}", index + 1, page.title),
+        );
+        if rotate.clicked() {
             action = Some(CardAction::Rotate(page.id));
         }
-        if ui
+        let earlier = ui
             .add_enabled(
                 index > group_start,
-                egui::Button::new(RichText::new("Back").strong()).min_size(Vec2::new(48.0, 28.0)),
+                egui::Button::new(RichText::new("Earlier").strong())
+                    .min_size(Vec2::new(48.0, 28.0)),
             )
-            .on_hover_text("Move page backward within this group")
-            .clicked()
-        {
+            .on_hover_text("Move page backward within this group");
+        label_button(
+            &earlier,
+            format!("Move page {} earlier: {}", index + 1, page.title),
+        );
+        if earlier.clicked() {
             action = Some(CardAction::MoveLeft(index));
         }
-        if ui
+        let later = ui
             .add_enabled(
                 index + 1 < group_end && index + 1 < page_count,
-                egui::Button::new(RichText::new("Next").strong()).min_size(Vec2::new(48.0, 28.0)),
+                egui::Button::new(RichText::new("Later").strong()).min_size(Vec2::new(48.0, 28.0)),
             )
-            .on_hover_text("Move page forward within this group")
-            .clicked()
-        {
+            .on_hover_text("Move page forward within this group");
+        label_button(
+            &later,
+            format!("Move page {} later: {}", index + 1, page.title),
+        );
+        if later.clicked() {
             action = Some(CardAction::MoveRight(index));
         }
     });
