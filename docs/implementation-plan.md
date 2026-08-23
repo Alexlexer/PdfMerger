@@ -17,7 +17,7 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 ## Implementation status
 
 - Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, PDF structure preservation, native distribution/release automation, and accessibility/input polish.
-- Next: performance, recovery, localization, packaged-app testing, and local document explanation.
+- Next: local document summarization, performance, recovery, localization, and packaged-app testing.
 
 ## Delivery milestones
 
@@ -100,26 +100,50 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
   alternatives for every operation.
 - Test high contrast, light/dark themes, display scaling, and screen-reader output.
 
-### 11. Large-document performance (`v0.4.0`)
+### 11. Local document summarization (`v0.4.0`)
+
+- Add a **Summarize this PDF** action to each source-document card, with optional summarization
+  of only the selected pages and page-number references supporting the generated summary.
+- Extract searchable text locally and clearly report image-only/scanned pages that require a
+  future OCR stage; never upload documents, extracted text, prompts, or generated summaries.
+- Integrate a compact GGUF model behind a backend abstraction, with a CPU baseline, bounded
+  memory/context use, cancellation, progress reporting, and configurable summary length.
+- Accelerate Apple Silicon through Metal by default. Evaluate a Core ML backend for direct Apple
+  Neural Engine use only when the chosen model and runtime support it reliably, show the active
+  backend in diagnostics, and always retain a CPU fallback.
+- Keep other hardware acceleration optional and capability-detected so unsupported devices never
+  prevent startup or document editing.
+- Make model installation explicitly opt-in. Verify model hashes and licenses, show disk/RAM
+  requirements, allow removal, and keep the application fully usable without a model.
+- Treat PDF text as untrusted input: the model may summarize content but cannot execute tools,
+  access local files beyond the chosen document, or use the network. Label output as generated
+  and potentially inaccurate.
+- Run summarization jobs off the UI thread and provide copy, regenerate, length, and audience-level
+  controls. Cache only with explicit permission and key cached results by document, pages, model,
+  and prompt version.
+- Add deterministic tests with a mock model backend, extraction/grounding fixtures, performance
+  budgets, and packaged-app checks that confirm the optional model is not accidentally bundled.
+
+### 12. Large-document performance (`v0.5.0`)
 
 - Benchmark 100, 500, and 1,000-page workspaces before optimization.
 - Virtualize page cards, load visible previews first, cancel stale work, and bound texture
   cache size and background concurrency.
 - Track import latency, scrolling frame time, memory, export time, and cancellation latency.
 
-### 12. Crash recovery and data integrity (`v0.5.0`)
+### 13. Crash recovery and data integrity (`v0.6.0`)
 
 - Add versioned, password-free recovery snapshots written with debounce and atomic replacement.
 - Offer restore/inspect/discard after an unclean shutdown and make normal project saves atomic.
 - Test corruption, disk-full, read-only, missing-source, and interrupted-write paths.
 
-### 13. Localization and optional updates (`v0.6.0`)
+### 14. Localization and optional updates (`v0.7.0`)
 
 - Move user-facing text into a typed message catalog and add a pseudo-locale.
 - Add an opt-in, privacy-respecting update check using only public release metadata.
 - Keep offline use unchanged and never send document data or local paths.
 
-### 14. UI, fixture, and packaged-application testing (`v0.7.0`)
+### 15. UI, fixture, and packaged-application testing (`v0.8.0`)
 
 - Add redistributable fixtures for PDF structures, encryption, malformed inputs, mixed page
   sizes, and project migrations.
@@ -127,25 +151,6 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 - Install/extract and smoke-test every native package before release publication.
 - Maintain a release checklist covering versions, changelog, notices, audits, checksums,
   attestations, rollback, and stable-release promotion.
-
-### 15. Local document explanation (`v0.8.0`)
-
-- Add an **Explain this PDF** action to each source-document card, with optional explanation of
-  only the selected pages and page-number references supporting the generated summary.
-- Extract searchable text locally and clearly report image-only/scanned pages that require a
-  future OCR stage; never upload documents, extracted text, prompts, or generated summaries.
-- Integrate a compact local model behind a backend abstraction, with a CPU baseline, optional
-  hardware acceleration, bounded memory/context use, cancellation, and progress reporting.
-- Make model installation explicitly opt-in. Verify model hashes and licenses, show disk/RAM
-  requirements, allow removal, and keep the application fully usable without a model.
-- Treat PDF text as untrusted input: the model may summarize content but cannot execute tools,
-  access local files beyond the chosen document, or use the network. Label output as generated
-  and potentially inaccurate.
-- Run explanation jobs off the UI thread and provide copy, regenerate, length, and audience-level
-  controls. Cache only with explicit permission and key cached results by document, pages, model,
-  and prompt version.
-- Add deterministic tests with a mock model backend, extraction/grounding fixtures, performance
-  budgets, and packaged-app checks that confirm the optional model is not accidentally bundled.
 
 Undo/redo, project persistence, multi-page selection, and the documented shortcuts are already
 implemented. Future milestones add regression, accessibility, and optional local-AI coverage
