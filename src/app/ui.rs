@@ -54,6 +54,14 @@ impl PdfMergerApp {
                         self.choose_files(context);
                     }
 
+                    if ui
+                        .add_enabled(!self.workspace.is_empty(), egui::Button::new("Local AI…"))
+                        .on_hover_text("Experimentally summarize a PDF with a local GGUF model")
+                        .clicked()
+                    {
+                        self.open_ai_dialog();
+                    }
+
                     let export = egui::Button::new(
                         RichText::new("Export PDF")
                             .strong()
