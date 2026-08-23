@@ -62,7 +62,7 @@ impl SummarizationBackend for LlamaCppBackend {
         self.context_size = config.context_size;
         Ok(BackendDiagnostics {
             runtime: "llama.cpp".to_owned(),
-            accelerator: if gpu { "GPU" } else { "CPU" }.to_owned(),
+            accelerator: accelerator_label(gpu).to_owned(),
         })
     }
 
@@ -167,6 +167,18 @@ impl SummarizationBackend for LlamaCppBackend {
     }
 }
 
+fn accelerator_label(gpu: bool) -> &'static str {
+    if !gpu {
+        return "CPU";
+    }
+    #[cfg(feature = "cuda")]
+    return "CUDA GPU";
+    #[cfg(all(not(feature = "cuda"), feature = "metal"))]
+    return "Metal GPU";
+    #[cfg(not(any(feature = "cuda", feature = "metal")))]
+    "GPU"
+}
+
 fn fit_prompt_to_context(
     model: &LlamaModel,
     request: &SummaryRequest,
@@ -248,7 +260,12 @@ mod tests {
         ExtractedDocument, ExtractedPage, SummaryAudience, SummaryLength, SummaryRequest,
     };
 
-    use super::{build_prompt, clean_model_output};
+    use super::{accelerator_label, build_prompt, clean_model_output};
+
+    #[test]
+    fn labels_cpu_backend() {
+        assert_eq!(accelerator_label(false), "CPU");
+    }
 
     #[test]
     fn removes_qwen_thinking_envelope() {
