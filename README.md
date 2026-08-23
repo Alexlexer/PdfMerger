@@ -87,7 +87,12 @@ Imports, exports, split operations, and project restoration run outside the UI t
 - `Ctrl/Cmd+Y` or `Ctrl/Cmd+Shift+Z`: redo
 - `R`: rotate selected pages clockwise
 - `Delete`: remove selected pages
-- `Escape`: clear the selection
+- `Escape`: close the active dialog, or clear the page selection when no dialog is open
+- `Tab` / `Shift+Tab`: move through menus, group controls, page controls, dialogs, and jobs
+- `Enter` / `Space`: activate the focused control
+
+To transfer pages without dragging, select the pages and activate **Move selection here** on the
+destination document group.
 
 ## Platform prerequisites
 
@@ -132,7 +137,8 @@ portrait or landscape page with margins, and embedded into the output PDF.
 
 ## Community and security
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening
+Contributions are welcome. See the [accessibility checklist](docs/accessibility.md) and read
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening
 a pull request and follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report
 security issues privately as described in [SECURITY.md](SECURITY.md).
 

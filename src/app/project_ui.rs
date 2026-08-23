@@ -1,6 +1,6 @@
 use std::{collections::HashMap, path::PathBuf, thread};
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use pdf_merger::{
     export_settings::ExportSettings,
     model::{PageDraft, PageRotation},
@@ -9,8 +9,10 @@ use pdf_merger::{
 
 use super::{
     AppMessage, PdfMergerApp,
+    accessibility::label_button,
     jobs::JobPhase,
     password_ui::{PasswordPurpose, PasswordRequest},
+    style,
 };
 
 pub(crate) enum ProjectOpenResult {
@@ -49,6 +51,8 @@ pub(crate) struct ProjectUiState {
     recent_projects: Vec<PathBuf>,
     pending_action: Option<PendingAction>,
     missing_sources: Option<MissingSourcesState>,
+    pending_focus_requested: bool,
+    missing_focus_requested: bool,
     allow_close: bool,
 }
 
@@ -61,8 +65,14 @@ impl ProjectUiState {
             recent_projects: project::load_recent_projects(),
             pending_action: None,
             missing_sources: None,
+            pending_focus_requested: false,
+            missing_focus_requested: false,
             allow_close: false,
         }
+    }
+
+    pub(crate) fn has_open_dialog(&self) -> bool {
+        self.pending_action.is_some() || self.missing_sources.is_some()
     }
 }
 
@@ -89,6 +99,9 @@ impl PdfMergerApp {
         let close_requested = context.input(|input| input.viewport().close_requested());
         if close_requested && dirty && !self.project_ui.allow_close {
             context.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            if self.project_ui.pending_action.is_none() {
+                self.project_ui.pending_focus_requested = true;
+            }
             self.project_ui.pending_action = Some(PendingAction::Exit);
         }
     }
@@ -191,6 +204,7 @@ impl PdfMergerApp {
                     missing,
                     replacements: HashMap::new(),
                 });
+                self.project_ui.missing_focus_requested = true;
                 self.set_status(
                     format!("Project needs {count} missing source file(s)."),
                     true,
@@ -201,6 +215,7 @@ impl PdfMergerApp {
 
     pub(super) fn request_clear_workspace(&mut self) {
         if self.is_project_dirty() {
+            self.project_ui.pending_focus_requested = true;
             self.project_ui.pending_action = Some(PendingAction::ClearWorkspace);
         } else {
             self.clear_to_new_workspace();
@@ -219,6 +234,7 @@ impl PdfMergerApp {
 
     fn request_open_project(&mut self, path: PathBuf, context: &egui::Context) {
         if self.is_project_dirty() {
+            self.project_ui.pending_focus_requested = true;
             self.project_ui.pending_action = Some(PendingAction::OpenProject(path));
         } else {
             self.start_project_open(path, context);
@@ -406,20 +422,18 @@ impl PdfMergerApp {
         let Some(pending) = self.project_ui.pending_action.clone() else {
             return;
         };
-        let mut open = true;
         let mut save = false;
         let mut discard = false;
         let mut cancel = false;
-        egui::Window::new("Unsaved project changes")
-            .id(egui::Id::new("discard_project_changes"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(context, |ui| {
+        let modal =
+            egui::Modal::new(egui::Id::new("discard_project_changes")).show(context, |ui| {
+                ui.set_width(style::dialog_width(context, 430.0));
+                ui.heading("Unsaved project changes");
+                ui.separator();
                 ui.label("Save your project before continuing?");
                 ui.label(
                     RichText::new("Unsaved page order, rotation, and removals will be lost.")
-                        .color(Color32::from_gray(150)),
+                        .color(style::muted_text(ui)),
                 );
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -429,12 +443,24 @@ impl PdfMergerApp {
                     if ui.button("Discard changes").clicked() {
                         discard = true;
                     }
-                    if ui.button(RichText::new("Save project").strong()).clicked() {
+                    let save_project = ui.button(RichText::new("Save project").strong());
+                    if self.project_ui.pending_focus_requested {
+                        save_project.request_focus();
+                        self.project_ui.pending_focus_requested = false;
+                    }
+                    if save_project.clicked() {
                         save = true;
                     }
                 });
             });
-        if !open || cancel {
+        if modal.should_close() {
+            cancel = true;
+        } else if context
+            .input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            save = true;
+        }
+        if cancel {
             self.project_ui.pending_action = None;
         } else if discard || (save && self.save_project(false)) {
             self.project_ui.pending_action = None;
@@ -446,16 +472,18 @@ impl PdfMergerApp {
         let Some(mut state) = self.project_ui.missing_sources.take() else {
             return;
         };
-        let mut open = true;
         let mut cancel = false;
         let mut locate = None;
         let mut retry = false;
-        egui::Window::new("Locate missing project sources")
-            .id(egui::Id::new("missing_project_sources"))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(520.0)
-            .show(context, |ui| {
+        let ready = state
+            .missing
+            .iter()
+            .all(|path| state.replacements.contains_key(path));
+        let modal =
+            egui::Modal::new(egui::Id::new("missing_project_sources")).show(context, |ui| {
+                ui.set_width(style::dialog_width(context, 520.0));
+                ui.heading("Locate missing project sources");
+                ui.separator();
                 ui.label("Choose a replacement for each missing source file.");
                 ui.add_space(8.0);
                 for (index, missing) in state.missing.iter().enumerate() {
@@ -464,10 +492,19 @@ impl PdfMergerApp {
                         if let Some(replacement) = state.replacements.get(missing) {
                             ui.label(
                                 RichText::new(format!("→ {}", replacement.display()))
-                                    .color(Color32::from_rgb(120, 200, 145)),
+                                    .color(style::success_text(ui)),
                             );
                         }
-                        if ui.small_button("Locate…").clicked() {
+                        let locate_button = ui.small_button("Locate…");
+                        label_button(
+                            &locate_button,
+                            format!("Locate replacement for {}", missing.display()),
+                        );
+                        if self.project_ui.missing_focus_requested {
+                            locate_button.request_focus();
+                            self.project_ui.missing_focus_requested = false;
+                        }
+                        if locate_button.clicked() {
                             locate = Some(index);
                         }
                     });
@@ -477,10 +514,6 @@ impl PdfMergerApp {
                     if ui.button("Cancel").clicked() {
                         cancel = true;
                     }
-                    let ready = state
-                        .missing
-                        .iter()
-                        .all(|path| state.replacements.contains_key(path));
                     if ui
                         .add_enabled(ready, egui::Button::new("Retry project open"))
                         .clicked()
@@ -489,6 +522,13 @@ impl PdfMergerApp {
                     }
                 });
             });
+        if modal.should_close() {
+            cancel = true;
+        } else if ready
+            && context.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter))
+        {
+            retry = true;
+        }
 
         if let Some(index) = locate
             && let Some(replacement) = rfd::FileDialog::new().pick_file()
@@ -499,7 +539,7 @@ impl PdfMergerApp {
         }
         if retry {
             self.start_project_recovery(state, context);
-        } else if open && !cancel {
+        } else if !cancel {
             self.project_ui.missing_sources = Some(state);
         }
     }

@@ -16,8 +16,8 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 
 ## Implementation status
 
-- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, and PDF structure preservation.
-- In progress: native distribution and release automation. Next: accessibility, performance, recovery, localization, and packaged-app testing.
+- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, PDF structure preservation, native distribution/release automation, and accessibility/input polish.
+- Next: performance, recovery, localization, packaged-app testing, and local document explanation.
 
 ## Delivery milestones
 
@@ -86,14 +86,14 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 ### 9. Native distribution (`v0.2.0`)
 
 - Add source artwork, runtime/window icons, and Windows executable identity metadata.
-- Package Windows x86-64 as NSIS plus portable ZIP, macOS Intel/Apple Silicon as DMG,
+- Package Windows x86-64 as NSIS plus portable ZIP, Apple Silicon macOS as DMG,
   and Linux x86-64 as AppImage plus portable tarball.
 - Validate that the Cargo version, packager version, changelog, and release tag agree.
 - Build packages on native GitHub runners, smoke-test their binaries, generate checksums and
   provenance attestations, and publish only after every required target succeeds.
 - Add signing and notarization once protected platform credentials are available.
 
-### 10. Accessibility and input polish (`v0.3.0`)
+### 10. Accessibility and input polish (`v0.3.0`, completed)
 
 - Complete keyboard navigation through document groups, page cards, dialogs, and jobs.
 - Add accessible labels, predictable focus order, visible focus states, and non-drag
@@ -128,9 +128,28 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 - Maintain a release checklist covering versions, changelog, notices, audits, checksums,
   attestations, rollback, and stable-release promotion.
 
+### 15. Local document explanation (`v0.8.0`)
+
+- Add an **Explain this PDF** action to each source-document card, with optional explanation of
+  only the selected pages and page-number references supporting the generated summary.
+- Extract searchable text locally and clearly report image-only/scanned pages that require a
+  future OCR stage; never upload documents, extracted text, prompts, or generated summaries.
+- Integrate a compact local model behind a backend abstraction, with a CPU baseline, optional
+  hardware acceleration, bounded memory/context use, cancellation, and progress reporting.
+- Make model installation explicitly opt-in. Verify model hashes and licenses, show disk/RAM
+  requirements, allow removal, and keep the application fully usable without a model.
+- Treat PDF text as untrusted input: the model may summarize content but cannot execute tools,
+  access local files beyond the chosen document, or use the network. Label output as generated
+  and potentially inaccurate.
+- Run explanation jobs off the UI thread and provide copy, regenerate, length, and audience-level
+  controls. Cache only with explicit permission and key cached results by document, pages, model,
+  and prompt version.
+- Add deterministic tests with a mock model backend, extraction/grounding fixtures, performance
+  budgets, and packaged-app checks that confirm the optional model is not accidentally bundled.
+
 Undo/redo, project persistence, multi-page selection, and the documented shortcuts are already
-implemented. Future milestones add regression and accessibility coverage rather than rebuilding
-those capabilities.
+implemented. Future milestones add regression, accessibility, and optional local-AI coverage
+rather than rebuilding those capabilities.
 
 ## Engineering rules
 - Each milestone must compile and test independently.
