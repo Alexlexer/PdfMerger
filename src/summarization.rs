@@ -8,6 +8,122 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result, anyhow, bail};
 use lopdf::Document;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryLength {
+    Short,
+    Standard,
+    Detailed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryAudience {
+    General,
+    Technical,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummaryRequest {
+    pub document: ExtractedDocument,
+    pub length: SummaryLength,
+    pub audience: SummaryAudience,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummaryResult {
+    pub text: String,
+    pub cited_pages: Vec<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelConfig {
+    pub id: String,
+    pub path: std::path::PathBuf,
+    pub context_size: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BackendDiagnostics {
+    pub runtime: String,
+    pub accelerator: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryPhase {
+    LoadingModel,
+    Generating,
+    UnloadingModel,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SummaryProgress {
+    pub phase: SummaryPhase,
+    pub completed: usize,
+    pub total: usize,
+}
+
+pub trait SummarizationBackend {
+    fn load(&mut self, model: &ModelConfig) -> Result<BackendDiagnostics>;
+
+    fn summarize(
+        &mut self,
+        request: &SummaryRequest,
+        is_cancelled: &dyn Fn() -> bool,
+        report_progress: &mut dyn FnMut(SummaryProgress),
+    ) -> Result<SummaryResult>;
+
+    fn unload(&mut self) -> Result<()>;
+}
+
+pub fn run_summary_job(
+    backend: &mut dyn SummarizationBackend,
+    model: &ModelConfig,
+    request: &SummaryRequest,
+    is_cancelled: &dyn Fn() -> bool,
+    report_progress: &mut dyn FnMut(SummaryProgress),
+) -> Result<(SummaryResult, BackendDiagnostics)> {
+    if is_cancelled() {
+        bail!("summarization cancelled before model loading");
+    }
+    report_progress(SummaryProgress {
+        phase: SummaryPhase::LoadingModel,
+        completed: 0,
+        total: 1,
+    });
+    let diagnostics = backend.load(model)?;
+    report_progress(SummaryProgress {
+        phase: SummaryPhase::LoadingModel,
+        completed: 1,
+        total: 1,
+    });
+
+    let generation = if is_cancelled() {
+        Err(anyhow!("summarization cancelled after model loading"))
+    } else {
+        backend.summarize(request, is_cancelled, report_progress)
+    };
+
+    report_progress(SummaryProgress {
+        phase: SummaryPhase::UnloadingModel,
+        completed: 0,
+        total: 1,
+    });
+    let unloading = backend.unload();
+    report_progress(SummaryProgress {
+        phase: SummaryPhase::UnloadingModel,
+        completed: 1,
+        total: 1,
+    });
+
+    match (generation, unloading) {
+        (Ok(summary), Ok(())) => Ok((summary, diagnostics)),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error).context("summary completed but model unloading failed"),
+        (Err(generation_error), Err(unload_error)) => {
+            Err(generation_error).context(format!("model unloading also failed: {unload_error:#}"))
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ExtractionLimits {
     pub max_file_bytes: u64,
@@ -173,7 +289,95 @@ mod tests {
         dictionary,
     };
 
-    use super::{ExtractionLimits, extract_pdf_text};
+    use super::{
+        BackendDiagnostics, ExtractedDocument, ExtractionLimits, ModelConfig, SummarizationBackend,
+        SummaryAudience, SummaryLength, SummaryPhase, SummaryProgress, SummaryRequest,
+        SummaryResult, extract_pdf_text, run_summary_job,
+    };
+
+    #[derive(Default)]
+    struct MockBackend {
+        loaded: bool,
+        load_count: usize,
+        unload_count: usize,
+        fail_generation: bool,
+    }
+
+    impl SummarizationBackend for MockBackend {
+        fn load(&mut self, _model: &ModelConfig) -> anyhow::Result<BackendDiagnostics> {
+            assert!(!self.loaded);
+            self.loaded = true;
+            self.load_count += 1;
+            Ok(BackendDiagnostics {
+                runtime: "deterministic mock".to_owned(),
+                accelerator: "none".to_owned(),
+            })
+        }
+
+        fn summarize(
+            &mut self,
+            request: &SummaryRequest,
+            is_cancelled: &dyn Fn() -> bool,
+            report_progress: &mut dyn FnMut(SummaryProgress),
+        ) -> anyhow::Result<SummaryResult> {
+            assert!(self.loaded);
+            if self.fail_generation {
+                anyhow::bail!("mock generation failure");
+            }
+            let searchable = request
+                .document
+                .pages
+                .iter()
+                .filter(|page| page.has_searchable_text)
+                .collect::<Vec<_>>();
+            for (index, _) in searchable.iter().enumerate() {
+                if is_cancelled() {
+                    anyhow::bail!("summarization cancelled during generation");
+                }
+                report_progress(SummaryProgress {
+                    phase: SummaryPhase::Generating,
+                    completed: index + 1,
+                    total: searchable.len(),
+                });
+            }
+            Ok(SummaryResult {
+                text: format!("Mock summary of {} searchable page(s).", searchable.len()),
+                cited_pages: searchable.iter().map(|page| page.page_number).collect(),
+            })
+        }
+
+        fn unload(&mut self) -> anyhow::Result<()> {
+            assert!(self.loaded);
+            self.loaded = false;
+            self.unload_count += 1;
+            Ok(())
+        }
+    }
+
+    fn mock_request() -> SummaryRequest {
+        SummaryRequest {
+            document: ExtractedDocument {
+                pages: vec![super::ExtractedPage {
+                    page_number: 3,
+                    text: "Searchable test content for a deterministic summary.".to_owned(),
+                    has_searchable_text: true,
+                    truncated: false,
+                }],
+                total_characters: 52,
+                truncated: false,
+            },
+            length: SummaryLength::Standard,
+            audience: SummaryAudience::General,
+        }
+    }
+
+    fn mock_model() -> ModelConfig {
+        ModelConfig {
+            id: "test/mock".to_owned(),
+            path: PathBuf::from("unused.gguf"),
+            context_size: 4096,
+        }
+    }
 
     fn fixture_path(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -287,5 +491,66 @@ mod tests {
         fs::remove_file(path).unwrap();
 
         assert!(error.contains("page 2 does not exist"));
+    }
+
+    #[test]
+    fn summary_job_loads_generates_and_unloads() {
+        let mut backend = MockBackend::default();
+        let mut phases = Vec::new();
+        let (result, diagnostics) = run_summary_job(
+            &mut backend,
+            &mock_model(),
+            &mock_request(),
+            &|| false,
+            &mut |progress| phases.push(progress.phase),
+        )
+        .unwrap();
+
+        assert_eq!(result.cited_pages, vec![3]);
+        assert_eq!(diagnostics.runtime, "deterministic mock");
+        assert!(!backend.loaded);
+        assert_eq!(backend.load_count, 1);
+        assert_eq!(backend.unload_count, 1);
+        assert!(phases.contains(&SummaryPhase::Generating));
+        assert_eq!(phases.last(), Some(&SummaryPhase::UnloadingModel));
+    }
+
+    #[test]
+    fn summary_job_unloads_after_generation_failure() {
+        let mut backend = MockBackend {
+            fail_generation: true,
+            ..MockBackend::default()
+        };
+        let error = run_summary_job(
+            &mut backend,
+            &mock_model(),
+            &mock_request(),
+            &|| false,
+            &mut |_| {},
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("mock generation failure"));
+        assert!(!backend.loaded);
+        assert_eq!(backend.unload_count, 1);
+    }
+
+    #[test]
+    fn summary_job_does_not_load_when_already_cancelled() {
+        let mut backend = MockBackend::default();
+        let error = run_summary_job(
+            &mut backend,
+            &mock_model(),
+            &mock_request(),
+            &|| true,
+            &mut |_| {},
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("cancelled before model loading"));
+        assert_eq!(backend.load_count, 0);
+        assert_eq!(backend.unload_count, 0);
     }
 }
