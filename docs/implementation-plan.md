@@ -16,8 +16,8 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
 
 ## Implementation status
 
-- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, PDF structure preservation, and native distribution/release automation.
-- In progress: accessibility and input polish. Next: performance, recovery, localization, packaged-app testing, and local document explanation.
+- Completed: architecture baseline, core editing, split/export-selected, project persistence, export settings, protected PDFs, job progress/cancellation/diagnostics, source-document group cards, PDF structure preservation, native distribution/release automation, and accessibility/input polish.
+- Next: performance, recovery, localization, packaged-app testing, and local document explanation.
 
 ## Delivery milestones
 
@@ -93,7 +93,7 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
   provenance attestations, and publish only after every required target succeeds.
 - Add signing and notarization once protected platform credentials are available.
 
-### 10. Accessibility and input polish (`v0.3.0`)
+### 10. Accessibility and input polish (`v0.3.0`, completed)
 
 - Complete keyboard navigation through document groups, page cards, dialogs, and jobs.
 - Add accessible labels, predictable focus order, visible focus states, and non-drag

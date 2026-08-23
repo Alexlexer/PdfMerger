@@ -1,6 +1,6 @@
 name = "pdf-merger"
 product-name = "PdfMerger"
-version = "0.2.0"
+version = "0.3.0"
 identifier = "io.github.alexlexer.PdfMerger"
 description = "An offline native desktop app for visually arranging, merging, splitting, and editing PDFs."
 long-description = "PdfMerger processes PDF files and images locally. Arrange pages visually, transfer pages between documents, split selections, and export without uploading documents."
