@@ -492,8 +492,10 @@ fn collect_bookmarks_for_page(outlines: &[Outline], page_id: ObjectId, titles: &
 fn decode_pdf_text(bytes: &[u8]) -> String {
     if bytes.starts_with(&[0xfe, 0xff]) {
         let units = bytes[2..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]));
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair));
         String::from_utf16_lossy(&units.collect::<Vec<_>>())
     } else {
         String::from_utf8_lossy(bytes).into_owned()
@@ -1346,7 +1348,7 @@ mod tests {
             pdf_preview.rgba.len(),
             pdf_preview.size[0] * pdf_preview.size[1] * 4
         );
-        assert!(pdf_preview.rgba.chunks_exact(4).any(|pixel| {
+        assert!(pdf_preview.rgba.as_chunks::<4>().0.iter().any(|pixel| {
             pixel[0] > 70 && pixel[0] < 120 && pixel[1] > 80 && pixel[1] < 130 && pixel[2] > 180
         }));
 
