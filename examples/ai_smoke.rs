@@ -14,15 +14,21 @@ fn main() -> Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .context("usage: cargo run --release --example ai_smoke -- MODEL.gguf")?;
+    let source_text = "PdfMerger is a private offline desktop application. It combines and arranges PDF pages and images. The experimental local AI feature summarizes searchable PDF text without uploading the document.";
+    let repeat = std::env::var("PDF_MERGER_AI_SMOKE_REPEAT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(1);
+    let source_text = source_text.repeat(repeat);
     let request = SummaryRequest {
         document: ExtractedDocument {
             pages: vec![ExtractedPage {
                 page_number: 1,
-                text: "PdfMerger is a private offline desktop application. It combines and arranges PDF pages and images. The experimental local AI feature summarizes searchable PDF text without uploading the document.".to_owned(),
+                text: source_text.clone(),
                 has_searchable_text: true,
                 truncated: false,
             }],
-            total_characters: 181,
+            total_characters: source_text.chars().count(),
             truncated: false,
         },
         length: SummaryLength::Short,

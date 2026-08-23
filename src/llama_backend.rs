@@ -88,17 +88,33 @@ impl SummarizationBackend for LlamaCppBackend {
         };
         let tokens = fit_prompt_to_context(model, request, self.context_size, output_limit)?;
 
-        let mut batch = LlamaBatch::new(tokens.len().max(1), 1);
-        let last = tokens
-            .len()
-            .checked_sub(1)
-            .context("prompt produced no tokens")?;
-        for (position, token) in tokens.into_iter().enumerate() {
-            batch.add(token, i32::try_from(position)?, &[0], position == last)?;
+        if tokens.is_empty() {
+            bail!("prompt produced no tokens");
         }
-        context
-            .decode(&mut batch)
-            .context("prompt evaluation failed")?;
+        let batch_capacity = usize::try_from(context.n_batch())?;
+        let token_count = tokens.len();
+        let mut final_batch = None;
+        for (chunk_index, chunk) in tokens.chunks(batch_capacity).enumerate() {
+            if is_cancelled() {
+                bail!("summarization cancelled during prompt evaluation");
+            }
+            let offset = chunk_index * batch_capacity;
+            let mut batch = LlamaBatch::new(chunk.len(), 1);
+            for (index, token) in chunk.iter().copied().enumerate() {
+                let position = offset + index;
+                batch.add(
+                    token,
+                    i32::try_from(position)?,
+                    &[0],
+                    position + 1 == token_count,
+                )?;
+            }
+            context
+                .decode(&mut batch)
+                .context("prompt evaluation failed")?;
+            final_batch = Some(batch);
+        }
+        let mut batch = final_batch.context("prompt produced no batches")?;
 
         let mut sampler = LlamaSampler::chain_simple([
             LlamaSampler::temp(0.2),
@@ -107,7 +123,7 @@ impl SummarizationBackend for LlamaCppBackend {
         ]);
         let mut decoder = encoding_rs::UTF_8.new_decoder();
         let mut output = String::new();
-        for (position, generated) in (batch.n_tokens()..).zip(0..output_limit) {
+        for (position, generated) in (i32::try_from(token_count)?..).zip(0..output_limit) {
             if is_cancelled() {
                 bail!("summarization cancelled during generation");
             }
