@@ -19,6 +19,7 @@ eframe = { version = "0.35", default-features = false, features = [
     "wgpu",
     "x11",
 ] }
+encoding_rs = "0.8"
 hayro = "0.7.1"
 image = { version = "0.25", default-features = false, features = [
     "bmp",
@@ -30,6 +31,7 @@ image = { version = "0.25", default-features = false, features = [
 ] }
 indexmap = "2.13"
 lopdf = "0.44"
+llama-cpp-2 = "0.1.154"
 printpdf = { version = "0.12", default-features = false, features = [
     "bmp",
     "gif",
