@@ -10,6 +10,11 @@ readme = "README.md"
 keywords = ["pdf", "merge", "desktop", "egui", "offline"]
 categories = ["gui", "multimedia::images"]
 
+[features]
+default = []
+cuda = ["llama-cpp-2/cuda"]
+metal = ["llama-cpp-2/metal"]
+
 [dependencies]
 anyhow = "1.0"
 eframe = { version = "0.35", default-features = false, features = [
