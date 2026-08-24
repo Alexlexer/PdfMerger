@@ -211,6 +211,7 @@ pub fn extract_pdf_text(
     let mut pages = Vec::with_capacity(page_numbers.len());
     let mut total_characters = 0usize;
     let mut document_truncated = false;
+    let mut fallback_pages: Option<Vec<String>> = None;
 
     for page_number in page_numbers {
         let remaining = limits
@@ -224,13 +225,27 @@ pub fn extract_pdf_text(
         let raw = document
             .extract_text_with_limit(&[page_number], limits.max_decompressed_bytes_per_page)
             .with_context(|| format!("could not extract text from page {page_number}"))?;
-        let normalized = normalize_text(&raw);
+        let mut normalized = normalize_text(&raw);
+        if searchable_character_count(&normalized) < limits.minimum_searchable_characters {
+            let extracted = fallback_pages.get_or_insert_with(|| {
+                let result = match password {
+                    Some(password) => {
+                        pdf_extract::extract_text_from_mem_by_pages_encrypted(&bytes, password)
+                    }
+                    None => pdf_extract::extract_text_from_mem_by_pages(&bytes),
+                };
+                result.unwrap_or_default()
+            });
+            if let Some(fallback) = extracted.get(page_number.saturating_sub(1) as usize) {
+                let fallback = normalize_text(fallback);
+                if searchable_character_count(&fallback) > searchable_character_count(&normalized) {
+                    normalized = fallback;
+                }
+            }
+        }
         let allowed = remaining.min(limits.max_characters_per_page);
         let (text, truncated) = truncate_characters(normalized, allowed);
-        let searchable_characters = text
-            .chars()
-            .filter(|character| character.is_alphanumeric())
-            .count();
+        let searchable_characters = searchable_character_count(&text);
         total_characters += text.chars().count();
         document_truncated |= truncated;
         pages.push(ExtractedPage {
@@ -246,6 +261,12 @@ pub fn extract_pdf_text(
         total_characters,
         truncated: document_truncated,
     })
+}
+
+fn searchable_character_count(text: &str) -> usize {
+    text.chars()
+        .filter(|character| character.is_alphanumeric())
+        .count()
 }
 
 fn validate_limits(limits: ExtractionLimits) -> Result<()> {

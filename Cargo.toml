@@ -37,6 +37,7 @@ image = { version = "0.25", default-features = false, features = [
 indexmap = "2.13"
 lopdf = "0.44"
 llama-cpp-2 = "0.1.154"
+pdf-extract = "0.12"
 printpdf = { version = "0.12", default-features = false, features = [
     "bmp",
     "gif",
