@@ -10,7 +10,7 @@ use pdf_merger::{
     },
 };
 
-use super::{AppMessage, PdfMergerApp, jobs::JobPhase, style};
+use super::{AppMessage, PdfMergerApp, backend_manager, jobs::JobPhase, style};
 
 const RECOMMENDED_MODEL_NAME: &str = "Qwen3.5 4B · Q4_K_M";
 const RECOMMENDED_MODEL_FILE: &str = "Qwen3.5-4B-Q4_K_M.gguf";
@@ -27,6 +27,8 @@ pub(super) struct AiUiState {
     pub language: SummaryLanguage,
     pub result: String,
     pub diagnostics: String,
+    pub backend_message: String,
+    pub confirm_backend_removal: bool,
 }
 
 impl Default for AiUiState {
@@ -40,6 +42,8 @@ impl Default for AiUiState {
             language: SummaryLanguage::SameAsDocument,
             result: String::new(),
             diagnostics: String::new(),
+            backend_message: String::new(),
+            confirm_backend_removal: false,
         }
     }
 }
@@ -127,6 +131,58 @@ impl PdfMergerApp {
                         )
                         .color(style::muted_text(ui)),
                     );
+                });
+                ui.collapsing("AI acceleration backends", |ui| {
+                    for backend in backend_manager::statuses() {
+                        let state = if backend.installed { "installed" } else { "not installed" };
+                        ui.label(format!("{}: {state}", backend.name));
+                    }
+                    ui.label(
+                        RichText::new("CPU remains available when no optional GPU backend is installed.")
+                            .color(style::muted_text(ui)),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        let idle = self.jobs.active_count() == 0;
+                        if ui
+                            .add_enabled(idle, egui::Button::new("Install backend pack…"))
+                            .clicked()
+                            && let Some(directory) = rfd::FileDialog::new().pick_folder()
+                        {
+                            self.ai_ui.backend_message = match backend_manager::install_pack(&directory) {
+                                Ok(count) => format!(
+                                    "Installed {count} backend module(s). Restart PdfMerger before summarizing."
+                                ),
+                                Err(error) => format!("Backend installation failed: {error:#}"),
+                            };
+                        }
+                        if ui
+                            .add_enabled(idle, egui::Button::new("Remove GPU backends"))
+                            .clicked()
+                        {
+                            self.ai_ui.confirm_backend_removal = true;
+                        }
+                    });
+                    if self.ai_ui.confirm_backend_removal {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label("Remove all optional GPU modules?");
+                            if ui.button("Confirm removal").clicked() {
+                                self.ai_ui.confirm_backend_removal = false;
+                            self.ai_ui.backend_message = match backend_manager::remove_optional_backends() {
+                                Ok(0) => "No optional GPU backend was installed.".to_owned(),
+                                Ok(count) => format!(
+                                    "Removed {count} backend module(s). Restart PdfMerger to use CPU only."
+                                ),
+                                Err(error) => format!("Backend removal failed: {error:#}"),
+                            };
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.ai_ui.confirm_backend_removal = false;
+                            }
+                        });
+                        }
+                    if !self.ai_ui.backend_message.is_empty() {
+                        ui.label(&self.ai_ui.backend_message);
+                    }
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.label("PDF:");
