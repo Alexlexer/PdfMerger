@@ -4,8 +4,8 @@ use anyhow::{Context, Result};
 use pdf_merger::{
     llama_backend::LlamaCppBackend,
     summarization::{
-        ExtractedDocument, ExtractedPage, ModelConfig, SummaryAudience, SummaryLength,
-        SummaryRequest, run_summary_job,
+        ExtractedDocument, ExtractedPage, ExtractionLimits, ModelConfig, SummaryAudience,
+        SummaryLength, SummaryRequest, extract_pdf_text, run_summary_job,
     },
 };
 
@@ -14,14 +14,16 @@ fn main() -> Result<()> {
         .nth(1)
         .map(PathBuf::from)
         .context("usage: cargo run --release --example ai_smoke -- MODEL.gguf")?;
+    let document_path = std::env::args_os().nth(2).map(PathBuf::from);
     let source_text = "PdfMerger is a private offline desktop application. It combines and arranges PDF pages and images. The experimental local AI feature summarizes searchable PDF text without uploading the document.";
     let repeat = std::env::var("PDF_MERGER_AI_SMOKE_REPEAT")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(1);
     let source_text = source_text.repeat(repeat);
-    let request = SummaryRequest {
-        document: ExtractedDocument {
+    let document = match document_path {
+        Some(path) => extract_pdf_text(&path, None, None, ExtractionLimits::default())?,
+        None => ExtractedDocument {
             pages: vec![ExtractedPage {
                 page_number: 1,
                 text: source_text.clone(),
@@ -31,6 +33,9 @@ fn main() -> Result<()> {
             total_characters: source_text.chars().count(),
             truncated: false,
         },
+    };
+    let request = SummaryRequest {
+        document,
         length: SummaryLength::Short,
         audience: SummaryAudience::General,
     };
