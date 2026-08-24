@@ -20,6 +20,7 @@ mod export_dialog;
 mod jobs;
 mod page_grid;
 mod password_ui;
+mod previews;
 mod project_ui;
 mod split_dialog;
 mod style;
@@ -70,6 +71,9 @@ pub(super) enum AppMessage {
         >,
         cancelled: bool,
     },
+    PdfPreviewsReady {
+        results: Vec<(u64, Result<pdf_merger::model::PreviewData, String>)>,
+    },
 }
 
 pub struct PdfMergerApp {
@@ -80,6 +84,10 @@ pub struct PdfMergerApp {
     pub(super) status: String,
     pub(super) status_is_error: bool,
     pub(super) preview_textures: HashMap<u64, egui::TextureHandle>,
+    pub(super) pdf_previews: previews::PreviewCache,
+    pub(super) pdf_preview_order: previews::PreviewOrder,
+    pub(super) pending_pdf_previews: HashSet<u64>,
+    pub(super) failed_pdf_previews: HashSet<u64>,
     pub(super) selected: HashSet<u64>,
     pub(super) collapsed_groups: HashSet<u64>,
     pub(super) split_dialog: split_dialog::SplitDialogState,
@@ -110,6 +118,10 @@ impl PdfMergerApp {
             status: "Drop PDFs or images here to begin.".to_owned(),
             status_is_error: false,
             preview_textures: HashMap::new(),
+            pdf_previews: HashMap::new(),
+            pdf_preview_order: previews::PreviewOrder::new(),
+            pending_pdf_previews: HashSet::new(),
+            failed_pdf_previews: HashSet::new(),
             selected: HashSet::new(),
             collapsed_groups: HashSet::new(),
             split_dialog: split_dialog::SplitDialogState::default(),
@@ -327,6 +339,9 @@ impl PdfMergerApp {
                             }
                         }
                     }
+                }
+                AppMessage::PdfPreviewsReady { results } => {
+                    self.receive_pdf_previews(results);
                 }
             }
         }
