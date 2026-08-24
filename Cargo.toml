@@ -17,7 +17,7 @@ metal = ["llama-cpp-2/metal"]
 
 [dependencies]
 anyhow = "1.0"
-eframe = { version = "0.35", default-features = false, features = [
+eframe = { version = "0.36", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "wayland",
