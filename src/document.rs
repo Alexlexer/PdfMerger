@@ -151,43 +151,50 @@ fn import_pdf(
         )));
     }
 
-    let preview_pdf =
-        hayro::hayro_syntax::Pdf::new_with_password(bytes, password.unwrap_or_default()).ok();
-    let preview_cache = hayro::RenderCache::new();
+    let file_name = display_name(path);
+
+    Ok((1..=page_count)
+        .map(|index| PageDraft {
+            source: PageSource::Pdf {
+                path: path.to_path_buf(),
+                page_number: index as u32,
+            },
+            title: file_name.clone(),
+            subtitle: format!("PDF page {index} of {page_count}"),
+            preview: None,
+        })
+        .collect())
+}
+
+pub fn render_pdf_previews(
+    path: &Path,
+    password: Option<&str>,
+    page_numbers: &[u32],
+) -> Result<Vec<(u32, PreviewData)>> {
+    let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
+    let pdf = hayro::hayro_syntax::Pdf::new_with_password(bytes, password.unwrap_or_default())
+        .map_err(|_| anyhow!("could not parse {} for previews", path.display()))?;
+    let cache = hayro::RenderCache::new();
     let interpreter_settings = hayro::hayro_interpret::InterpreterSettings::default();
     let render_settings = hayro::RenderSettings {
         x_scale: 0.5,
         y_scale: 0.5,
         ..Default::default()
     };
-    let file_name = display_name(path);
-
-    Ok((1..=page_count)
-        .map(|index| {
-            let preview = preview_pdf
-                .as_ref()
-                .and_then(|pdf| pdf.pages().get(index - 1))
-                .and_then(|page| {
-                    preview_from_pdf_page(
-                        page,
-                        &preview_cache,
-                        &interpreter_settings,
-                        &render_settings,
-                    )
-                    .ok()
-                });
-
-            PageDraft {
-                source: PageSource::Pdf {
-                    path: path.to_path_buf(),
-                    page_number: index as u32,
-                },
-                title: file_name.clone(),
-                subtitle: format!("PDF page {index} of {page_count}"),
-                preview,
-            }
-        })
-        .collect())
+    let mut previews = Vec::with_capacity(page_numbers.len());
+    for &page_number in page_numbers {
+        let index = usize::try_from(page_number.saturating_sub(1))
+            .context("PDF page number does not fit this platform")?;
+        let Some(page) = pdf.pages().get(index) else {
+            continue;
+        };
+        if let Ok(preview) =
+            preview_from_pdf_page(page, &cache, &interpreter_settings, &render_settings)
+        {
+            previews.push((page_number, preview));
+        }
+    }
+    Ok(previews)
 }
 fn import_image(path: &Path) -> Result<Vec<PageDraft>> {
     let bytes = fs::read(path).with_context(|| format!("could not read {}", path.display()))?;
@@ -1343,7 +1350,9 @@ mod tests {
         assert_eq!(Document::load(&output_path).unwrap().get_pages().len(), 1);
 
         let pdf_drafts = import_file(&output_path).unwrap();
-        let pdf_preview = pdf_drafts[0].preview.as_ref().unwrap();
+        assert!(pdf_drafts[0].preview.is_none());
+        let previews = render_pdf_previews(&output_path, None, &[1]).unwrap();
+        let pdf_preview = &previews[0].1;
         assert_eq!(
             pdf_preview.rgba.len(),
             pdf_preview.size[0] * pdf_preview.size[1] * 4
