@@ -7,6 +7,24 @@ published from matching `vMAJOR.MINOR.PATCH` tags.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-24
+
+### Added
+
+- Private, fully local PDF summarization with GGUF models and no document uploads.
+- Explicit model selection, a recommended downloadable model, output-language selection, and
+  diagnostics showing the active inference backend.
+- Multi-pass summarization for documents larger than a model's context window, with cancellation
+  and automatic model unloading when each job finishes.
+- Opt-in NVIDIA CUDA builds covering RTX 20, 30, 40, and 50 series GPUs, plus Metal acceleration
+  for Apple Silicon macOS builds and CPU fallback.
+
+### Changed
+
+- PDF imports now load page metadata immediately and render only visible previews on demand,
+  keeping very large documents responsive and memory-bounded.
+- PDF text extraction better recovers uncommon font encodings and strips invalid control bytes.
+
 ## [0.3.0] - 2026-08-23
 
 ### Added
@@ -39,7 +57,8 @@ published from matching `vMAJOR.MINOR.PATCH` tags.
   selection, undo/redo, splitting, project persistence, background jobs, and
   structure-preserving PDF export.
 
-[Unreleased]: https://github.com/Alexlexer/PdfMerger/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Alexlexer/PdfMerger/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Alexlexer/PdfMerger/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Alexlexer/PdfMerger/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Alexlexer/PdfMerger/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Alexlexer/PdfMerger/releases/tag/v0.1.0

@@ -1,7 +1,7 @@
-# Local AI summarization experiment
+# Local AI summarization
 
-This branch is a research experiment. It is not assigned to `v0.4.0` or any other release, and
-none of its code or model choices are release commitments.
+The experiment met its initial release gate and ships in `v0.4.0`. Inference remains optional,
+local-only, and model-free until the user explicitly chooses a GGUF model.
 
 ## Question
 
@@ -21,7 +21,7 @@ and no loss of its native, private, offline character?
 - Scanned/image-only pages are reported, not sent through hidden OCR.
 - PDF text, prompts, and generated summaries are not logged.
 
-## Prototype stages
+## Development stages
 
 1. Extract bounded, page-numbered text and classify pages without searchable text.
 2. Exercise the complete job lifecycle with a deterministic mock backend.
@@ -30,7 +30,7 @@ and no loss of its native, private, offline character?
 5. Enable Apple Silicon Metal builds and verify GPU offload, CPU fallback, performance, and
    model-memory release after every job.
 6. Prototype Radeon acceleration through Vulkan, retaining the CPU baseline.
-7. Prototype model installation and removal only if inference is viable.
+7. Continue improving model installation and removal as the supported model set evolves.
 
 ## Measurements
 
@@ -41,8 +41,8 @@ and no loss of its native, private, offline character?
 - Memory retained after successful, failed, and cancelled jobs.
 - Installer size and cross-platform build impact without a bundled model.
 
-## Go/no-go gate
+## Release gate
 
-The experiment may be proposed for a future milestone only if it produces useful grounded
-summaries, fits the supported machines without disrupting PDF editing, unloads its memory
-reliably, and keeps release packages model-free. Otherwise it remains experimental or is removed.
+Local summarization must continue producing useful grounded summaries, fitting supported machines
+without disrupting PDF editing, unloading model memory reliably, and keeping release packages
+model-free.
