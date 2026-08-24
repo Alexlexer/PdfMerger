@@ -13,6 +13,8 @@ categories = ["gui", "multimedia::images"]
 [features]
 default = []
 cuda = ["llama-cpp-2/cuda"]
+cuda-modular = ["cuda", "dynamic-backends"]
+dynamic-backends = ["llama-cpp-2/dynamic-backends"]
 metal = ["llama-cpp-2/metal"]
 
 [dependencies]

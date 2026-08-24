@@ -46,6 +46,7 @@ impl SummarizationBackend for LlamaCppBackend {
         if config.path.extension().and_then(|value| value.to_str()) != Some("gguf") {
             bail!("the selected model must be a GGUF file");
         }
+        load_runtime_backends();
         let mut backend = LlamaBackend::init().context("could not initialize llama.cpp")?;
         backend.void_logs();
         let gpu = backend.supports_gpu_offload();
@@ -122,6 +123,31 @@ impl SummarizationBackend for LlamaCppBackend {
         Ok(())
     }
 }
+
+#[cfg(feature = "dynamic-backends")]
+fn load_runtime_backends() {
+    use llama_cpp_2::llama_backend::{load_backends, load_backends_from_path};
+    use std::sync::Once;
+
+    static LOAD_BACKENDS: Once = Once::new();
+    LOAD_BACKENDS.call_once(|| {
+        if let Ok(executable) = std::env::current_exe()
+            && let Some(directory) = executable.parent()
+        {
+            let backends = directory.join("backends");
+            if backends.is_dir() {
+                load_backends_from_path(&backends);
+                return;
+            }
+            load_backends_from_path(directory);
+            return;
+        }
+        load_backends();
+    });
+}
+
+#[cfg(not(feature = "dynamic-backends"))]
+fn load_runtime_backends() {}
 
 #[derive(Clone)]
 struct SectionSummary {
