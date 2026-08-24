@@ -108,11 +108,12 @@ New features should keep GUI event collection in `app`, domain mutations in `mod
   future OCR stage; never upload documents, extracted text, prompts, or generated summaries.
 - Integrate a compact GGUF model behind a backend abstraction, with a CPU baseline, bounded
   memory/context use, cancellation, progress reporting, and configurable summary length.
-- Accelerate Apple Silicon through Metal by default. Evaluate a Core ML backend for direct Apple
-  Neural Engine use only when the chosen model and runtime support it reliably, show the active
-  backend in diagnostics, and always retain a CPU fallback.
-- Keep other hardware acceleration optional and capability-detected so unsupported devices never
-  prevent startup or document editing.
+- Ship NVIDIA CUDA builds with kernels for RTX 20, 30, 40, and 50 series GPUs.
+- Add Radeon acceleration through Vulkan next, keeping it optional and capability-detected so an
+  unsupported GPU never prevents startup or document editing.
+- Follow with an Apple Silicon macOS build accelerated through Metal. Evaluate Core ML for direct
+  Apple Neural Engine use only when the chosen model and runtime support it reliably, show the
+  active backend in diagnostics, and always retain a CPU fallback.
 - Make model installation explicitly opt-in. Verify model hashes and licenses, show disk/RAM
   requirements, allow removal, and keep the application fully usable without a model.
 - Treat PDF text as untrusted input: the model may summarize content but cannot execute tools,
