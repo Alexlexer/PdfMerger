@@ -10,6 +10,7 @@ use super::{
     PdfMergerApp,
     accessibility::{label_button, label_toggle, mark_expanded},
     export_dialog::ExportTarget,
+    previews::PreviewRequest,
     style::{self, CARD_MARGIN, CARD_OUTER_WIDTH, CARD_SPACING, CARD_WIDTH, PREVIEW_SIZE},
 };
 
@@ -53,6 +54,7 @@ impl PdfMergerApp {
         let mut card_action = None;
         let mut group_action = None;
         let mut move_request = None;
+        let mut preview_requests = Vec::new();
 
         let scroll_output = ScrollArea::vertical()
             .id_salt("source_group_strip")
@@ -136,6 +138,8 @@ impl PdfMergerApp {
                                                                 group.end,
                                                                 self.selected.contains(&page.id),
                                                                 &mut self.preview_textures,
+                                                                &self.pdf_previews,
+                                                                &mut preview_requests,
                                                             ) {
                                                                 card_action = Some(action);
                                                             }
@@ -167,6 +171,8 @@ impl PdfMergerApp {
                     ui.add_space(12.0);
                 }
             });
+
+        self.request_pdf_previews(preview_requests, ui.ctx());
 
         if egui::DragAndDrop::has_payload_of_type::<usize>(ui.ctx())
             && let Some(pointer) = ui.ctx().pointer_latest_pos()
@@ -456,6 +462,8 @@ fn page_card(
     group_end: usize,
     selected: bool,
     preview_textures: &mut HashMap<u64, egui::TextureHandle>,
+    pdf_previews: &HashMap<u64, pdf_merger::model::PreviewData>,
+    preview_requests: &mut Vec<PreviewRequest>,
 ) -> Option<CardAction> {
     let mut action = None;
     ui.set_min_width(CARD_WIDTH);
@@ -509,7 +517,18 @@ fn page_card(
             Stroke::new(1.0, Color32::from_gray(72)),
             egui::StrokeKind::Inside,
         );
-        if let Some(preview) = &page.preview {
+        let preview = page.preview.as_ref().or_else(|| pdf_previews.get(&page.id));
+        if preview.is_none()
+            && preview_response.rect.intersects(ui.clip_rect())
+            && let pdf_merger::model::PageSource::Pdf { path, page_number } = &page.source
+        {
+            preview_requests.push(PreviewRequest {
+                id: page.id,
+                path: path.clone(),
+                page_number: *page_number,
+            });
+        }
+        if let Some(preview) = preview {
             let preview_size = match page.rotation {
                 PageRotation::Deg90 | PageRotation::Deg270 => [preview.size[1], preview.size[0]],
                 PageRotation::Deg0 | PageRotation::Deg180 => preview.size,
