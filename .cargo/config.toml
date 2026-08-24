@@ -1,0 +1,4 @@
+[env]
+# Produce CUDA kernels for every consumer RTX generation we support. This is ignored by
+# ordinary CPU/Metal builds and requires CUDA 13 or newer when the `cuda` feature is enabled.
+CMAKE_CUDA_ARCHITECTURES = "75;86;89;120"
