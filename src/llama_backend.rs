@@ -174,7 +174,7 @@ fn summarize_in_sections(
     loop {
         let prompt = build_synthesis_prompt(request, &summaries, false);
         let tokens = tokenize_prompt(model, &prompt)?;
-        if summaries.len() <= 6 && prompt_fits(tokens.len(), context_size, output_limit) {
+        if prompt_fits(tokens.len(), context_size, output_limit) {
             return generate_tokens(
                 backend,
                 model,
@@ -187,10 +187,10 @@ fn summarize_in_sections(
         }
 
         let mut reduced = Vec::new();
-        for group in summaries.chunks(6) {
+        for group in summaries.chunks(8) {
             let prompt = build_synthesis_prompt(request, group, true);
             let tokens = tokenize_prompt(model, &prompt)?;
-            if !prompt_fits(tokens.len(), context_size, 256) {
+            if !prompt_fits(tokens.len(), context_size, 192) {
                 bail!("intermediate summaries exceed the model context");
             }
             reduced.push(SectionSummary {
@@ -203,7 +203,7 @@ fn summarize_in_sections(
                     model,
                     context_size,
                     tokens,
-                    256,
+                    192,
                     is_cancelled,
                     report_progress,
                 )?,
