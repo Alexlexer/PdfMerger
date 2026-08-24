@@ -18,6 +18,9 @@ and no loss of its native, private, offline character?
 - macOS means Apple Silicon only. Metal follows the Radeon experiment; Core ML and the Apple
   Neural Engine remain a separate later evaluation.
 - Windows and Linux must retain a CPU baseline.
+- Hardware acceleration is modular: the application loads compatible libraries from a
+  `backends` directory beside the executable, and continues on CPU when an optional accelerator
+  module is absent.
 - Scanned/image-only pages are reported, not sent through hidden OCR.
 - PDF text, prompts, and generated summaries are not logged.
 
@@ -30,6 +33,17 @@ and no loss of its native, private, offline character?
 5. Prototype Radeon acceleration through Vulkan, retaining the CPU baseline.
 6. Verify Apple Silicon Metal performance and model-memory release after every job.
 7. Prototype model installation and removal only if inference is viable.
+
+## Experimental package layout
+
+Dynamic Windows builds keep the application, llama.cpp core libraries, and a `backends` directory
+in one package. CPU backend libraries form the baseline. `ggml-cuda.dll` and its matching NVIDIA
+runtime libraries are an optional CUDA pack; future Vulkan and Metal work should follow the same
+boundary rather than growing the base application.
+
+Backend libraries must come from the same build as the bundled llama.cpp core libraries. They are
+not a stable plug-in ABI, so PdfMerger must install or remove a complete, version-matched backend
+pack. Use `scripts/collect_ai_runtime.py` to assemble this layout from a dynamic-backend build.
 
 ## Measurements
 
