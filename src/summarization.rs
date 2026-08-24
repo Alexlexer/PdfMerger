@@ -235,7 +235,9 @@ pub fn extract_pdf_text(
             .extract_text_with_limit(&[page_number], limits.max_decompressed_bytes_per_page)
             .with_context(|| format!("could not extract text from page {page_number}"))?;
         let mut normalized = normalize_text(&raw);
-        if searchable_character_count(&normalized) < limits.minimum_searchable_characters {
+        if searchable_character_count(&normalized) < limits.minimum_searchable_characters
+            || looks_like_decoding_garbage(&normalized)
+        {
             let extracted = fallback_pages.get_or_insert_with(|| {
                 let result = match password {
                     Some(password) => {
@@ -247,7 +249,7 @@ pub fn extract_pdf_text(
             });
             if let Some(fallback) = extracted.get(page_number.saturating_sub(1) as usize) {
                 let fallback = normalize_text(fallback);
-                if searchable_character_count(&fallback) > searchable_character_count(&normalized) {
+                if extraction_is_better(&fallback, &normalized) {
                     normalized = fallback;
                 }
             }
@@ -255,12 +257,14 @@ pub fn extract_pdf_text(
         let allowed = remaining.min(limits.max_characters_per_page);
         let (text, truncated) = truncate_characters(normalized, allowed);
         let searchable_characters = searchable_character_count(&text);
+        let has_searchable_text = searchable_characters >= limits.minimum_searchable_characters
+            && !looks_like_decoding_garbage(&text);
         total_characters += text.chars().count();
         document_truncated |= truncated;
         pages.push(ExtractedPage {
             page_number,
             text,
-            has_searchable_text: searchable_characters >= limits.minimum_searchable_characters,
+            has_searchable_text,
             truncated,
         });
     }
@@ -276,6 +280,64 @@ fn searchable_character_count(text: &str) -> usize {
     text.chars()
         .filter(|character| character.is_alphanumeric())
         .count()
+}
+
+fn extraction_is_better(candidate: &str, current: &str) -> bool {
+    match (
+        looks_like_decoding_garbage(candidate),
+        looks_like_decoding_garbage(current),
+    ) {
+        (false, true) => true,
+        (true, false) => false,
+        _ => searchable_character_count(candidate) > searchable_character_count(current),
+    }
+}
+
+fn looks_like_decoding_garbage(text: &str) -> bool {
+    let mut total = 0usize;
+    let mut uncommon_symbols = 0usize;
+    let mut current_run = 0usize;
+    let mut longest_run = 0usize;
+
+    for character in text.chars() {
+        total += 1;
+        if character.is_whitespace() {
+            longest_run = longest_run.max(current_run);
+            current_run = 0;
+            continue;
+        }
+        current_run += 1;
+        if !character.is_alphanumeric()
+            && !matches!(
+                character,
+                '.' | ','
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | '\''
+                    | '’'
+                    | '"'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '-'
+                    | '/'
+                    | '\\'
+                    | '+'
+                    | '%'
+                    | '€'
+                    | '$'
+                    | '&'
+            )
+        {
+            uncommon_symbols += 1;
+        }
+    }
+    longest_run = longest_run.max(current_run);
+
+    total >= 20 && (longest_run > 120 || uncommon_symbols.saturating_mul(5) > total)
 }
 
 fn validate_limits(limits: ExtractionLimits) -> Result<()> {
@@ -334,6 +396,16 @@ mod tests {
             super::normalize_text("alpha\0beta\r\ngamma\tend"),
             "alphabeta\ngamma\tend"
         );
+    }
+
+    #[test]
+    fn detects_broken_custom_font_decoding() {
+        assert!(super::looks_like_decoding_garbage(
+            "cddefghgcdidgjkgdlgmnopqrstumomorstvuuvwsxvypsruoz{|rs}~psysupsuwvuv~su~}ursups}uros}vyysquwsut~sxuvyysquvyysquwsut~sxaXilZK"
+        ));
+        assert!(!super::looks_like_decoding_garbage(
+            "AVIS D'ÉCHÉANCE - LOYER\nPériode du 01/06/2026 au 30/06/2026\nSOLDE À PAYER : 2 116,40 €"
+        ));
     }
 
     #[derive(Default)]

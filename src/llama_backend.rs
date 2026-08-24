@@ -47,7 +47,9 @@ impl SummarizationBackend for LlamaCppBackend {
             bail!("the selected model must be a GGUF file");
         }
         let mut backend = LlamaBackend::init().context("could not initialize llama.cpp")?;
-        backend.void_logs();
+        if std::env::var_os("PDFMERGER_LLAMA_LOG").is_none() {
+            backend.void_logs();
+        }
         let gpu = backend.supports_gpu_offload();
         let model_params = if gpu {
             LlamaModelParams::default().with_n_gpu_layers(1000)
@@ -505,6 +507,12 @@ mod tests {
     #[test]
     fn labels_cpu_backend() {
         assert_eq!(accelerator_label(false), "CPU");
+    }
+
+    #[cfg(feature = "metal")]
+    #[test]
+    fn labels_metal_gpu_backend() {
+        assert_eq!(accelerator_label(true), "Metal GPU");
     }
 
     #[test]
