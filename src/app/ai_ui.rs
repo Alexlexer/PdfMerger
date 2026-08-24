@@ -46,6 +46,9 @@ impl Default for AiUiState {
 
 impl PdfMergerApp {
     pub(super) fn open_ai_dialog(&mut self) {
+        if self.ai_ui.model_path.is_none() {
+            self.ai_ui.model_path = discover_recommended_model();
+        }
         if self.ai_ui.source_path.is_none() {
             self.ai_ui.source_path = self.pdf_sources().into_iter().next();
         }
@@ -346,5 +349,76 @@ impl PdfMergerApp {
             repaint.request_repaint();
         });
         self.set_status("Preparing a completely local summary…", false);
+    }
+}
+
+fn discover_recommended_model() -> Option<PathBuf> {
+    recommended_model_candidates()
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn recommended_model_candidates() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Ok(executable) = std::env::current_exe()
+        && let Some(directory) = executable.parent()
+    {
+        directories.push(directory.to_owned());
+        directories.push(directory.join("models"));
+    }
+
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    if let Some(home) = &home {
+        directories.push(home.join("Downloads"));
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        directories.push(
+            PathBuf::from(local_app_data)
+                .join("PdfMerger")
+                .join("models"),
+        );
+    } else if cfg!(target_os = "macos") {
+        if let Some(home) = &home {
+            directories.push(
+                home.join("Library")
+                    .join("Application Support")
+                    .join("PdfMerger")
+                    .join("models"),
+            );
+        }
+    } else if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        directories.push(PathBuf::from(data_home).join("PdfMerger").join("models"));
+    } else if let Some(home) = &home {
+        directories.push(home.join(".local/share/PdfMerger/models"));
+    }
+
+    candidate_paths(&directories)
+}
+
+fn candidate_paths(directories: &[PathBuf]) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    for directory in directories {
+        let candidate = directory.join(RECOMMENDED_MODEL_FILE);
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RECOMMENDED_MODEL_FILE, candidate_paths};
+    use std::path::PathBuf;
+
+    #[test]
+    fn creates_unique_recommended_model_candidates() {
+        let directory = PathBuf::from("model-directory");
+        assert_eq!(
+            candidate_paths(&[directory.clone(), directory.clone()]),
+            vec![directory.join(RECOMMENDED_MODEL_FILE)]
+        );
     }
 }
