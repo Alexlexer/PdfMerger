@@ -47,14 +47,17 @@ jobs:
             os: windows-latest
             format: nsis
             binary: target/release/pdf-merger.exe
+            accelerator-features: ""
           - target: linux-x86_64
             os: ubuntu-24.04
             format: appimage
             binary: target/release/pdf-merger
+            accelerator-features: ""
           - target: macos-aarch64
             os: macos-15
             format: dmg
             binary: target/release/pdf-merger
+            accelerator-features: "--features metal"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,7 +77,7 @@ jobs:
         run: cargo install cargo-packager --version 0.11.8 --locked
 
       - name: Build release application
-        run: cargo build --release --locked
+        run: cargo build --release --locked ${{ matrix.accelerator-features }}
 
       - name: Smoke-test release binary
         run: ${{ matrix.binary }} --smoke-test

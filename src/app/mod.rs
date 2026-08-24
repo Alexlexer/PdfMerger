@@ -14,6 +14,7 @@ use pdf_merger::{
 
 mod accessibility;
 mod actions;
+mod ai_ui;
 mod editing;
 mod export_dialog;
 mod jobs;
@@ -58,6 +59,18 @@ pub(super) enum AppMessage {
         result: Result<project_ui::ProjectOpenResult, String>,
         cancelled: bool,
     },
+    SummaryComplete {
+        job_id: jobs::JobId,
+        result: Result<
+            (
+                pdf_merger::summarization::SummaryResult,
+                pdf_merger::summarization::BackendDiagnostics,
+                Vec<u32>,
+            ),
+            String,
+        >,
+        cancelled: bool,
+    },
     PdfPreviewsReady {
         results: Vec<(u64, Result<pdf_merger::model::PreviewData, String>)>,
     },
@@ -85,6 +98,7 @@ pub struct PdfMergerApp {
     pub(super) password_prompt: password_ui::PasswordPromptState,
     modal_focus: accessibility::ModalFocusState,
     appearance: style::AppearanceSettings,
+    ai_ui: ai_ui::AiUiState,
 }
 
 impl PdfMergerApp {
@@ -118,6 +132,7 @@ impl PdfMergerApp {
             password_prompt: password_ui::PasswordPromptState::default(),
             modal_focus: accessibility::ModalFocusState::default(),
             appearance,
+            ai_ui: ai_ui::AiUiState::default(),
         }
     }
 
@@ -290,6 +305,41 @@ impl PdfMergerApp {
                         self.finish_project_open(path, result);
                     }
                 }
+                AppMessage::SummaryComplete {
+                    job_id,
+                    result,
+                    cancelled,
+                } => {
+                    self.jobs.finish(job_id);
+                    if cancelled {
+                        self.set_status("Local summarization cancelled; model unloaded.", false);
+                    } else {
+                        match result {
+                            Ok((summary, diagnostics, scanned_pages)) => {
+                                self.ai_ui.result = summary.text;
+                                let skipped = if scanned_pages.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" · skipped image-only pages {scanned_pages:?}")
+                                };
+                                self.ai_ui.diagnostics = format!(
+                                    "{} on {}{skipped} · model unloaded",
+                                    diagnostics.runtime, diagnostics.accelerator
+                                );
+                                self.set_status("Local summary complete; model unloaded.", false);
+                            }
+                            Err(error) => {
+                                self.jobs.record(
+                                    jobs::DiagnosticLevel::Error,
+                                    "Local summarization failed",
+                                    &error,
+                                );
+                                self.ai_ui.diagnostics = error;
+                                self.set_status("Local summarization failed. See Details.", true);
+                            }
+                        }
+                    }
+                }
                 AppMessage::PdfPreviewsReady { results } => {
                     self.receive_pdf_previews(results);
                 }
@@ -331,6 +381,7 @@ impl eframe::App for PdfMergerApp {
         self.show_split_dialog(&context);
         self.show_project_dialogs(&context);
         self.show_password_prompt(&context);
+        self.show_ai_dialog(&context);
         self.jobs.show_details(&context);
         self.sync_modal_focus(&context);
         self.file_drop_overlay(&context);

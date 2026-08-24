@@ -17,6 +17,7 @@ pub(crate) enum JobPhase {
     Importing,
     Exporting,
     OpeningProject,
+    Summarizing,
 }
 
 impl JobPhase {
@@ -25,6 +26,7 @@ impl JobPhase {
             Self::Importing => "Importing",
             Self::Exporting => "Exporting",
             Self::OpeningProject => "Opening project",
+            Self::Summarizing => "Summarizing",
         }
     }
 }

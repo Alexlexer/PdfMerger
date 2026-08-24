@@ -1,6 +1,10 @@
 fn main() {
     println!("cargo:rerun-if-changed=assets/icons/icon.ico");
 
+    if std::env::var("TARGET").is_ok_and(|target| target.ends_with("windows-gnu")) {
+        println!("cargo:rustc-link-lib=advapi32");
+    }
+
     #[cfg(windows)]
     {
         let mut resource = winresource::WindowsResource::new();
