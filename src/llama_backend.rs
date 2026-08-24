@@ -155,6 +155,13 @@ fn summarize_in_sections(
             is_cancelled,
             report_progress,
         )?;
+        if std::env::var_os("PDFMERGER_AI_TRACE").is_some() {
+            eprintln!(
+                "section pages {:?}: {}",
+                cited_pages(&section_request.document),
+                text
+            );
+        }
         summaries.push(SectionSummary {
             pages: cited_pages(&section_request.document),
             text,
