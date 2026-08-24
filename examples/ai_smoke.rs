@@ -21,6 +21,7 @@ fn main() -> Result<()> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(1);
     let source_text = source_text.repeat(repeat);
+    let uses_pdf = document_path.is_some();
     let document = match document_path {
         Some(path) => extract_pdf_text(&path, None, None, ExtractionLimits::default())?,
         None => ExtractedDocument {
@@ -36,7 +37,11 @@ fn main() -> Result<()> {
     };
     let request = SummaryRequest {
         document,
-        length: SummaryLength::Short,
+        length: if uses_pdf {
+            SummaryLength::Standard
+        } else {
+            SummaryLength::Short
+        },
         audience: SummaryAudience::General,
     };
     let model = ModelConfig {
