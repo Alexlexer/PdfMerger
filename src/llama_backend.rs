@@ -174,7 +174,7 @@ fn summarize_in_sections(
     loop {
         let prompt = build_synthesis_prompt(request, &summaries, false);
         let tokens = tokenize_prompt(model, &prompt)?;
-        if prompt_fits(tokens.len(), context_size, output_limit) {
+        if summaries.len() <= 6 && prompt_fits(tokens.len(), context_size, output_limit) {
             return generate_tokens(
                 backend,
                 model,
@@ -187,10 +187,10 @@ fn summarize_in_sections(
         }
 
         let mut reduced = Vec::new();
-        for group in summaries.chunks(8) {
+        for group in summaries.chunks(6) {
             let prompt = build_synthesis_prompt(request, group, true);
             let tokens = tokenize_prompt(model, &prompt)?;
-            if !prompt_fits(tokens.len(), context_size, 192) {
+            if !prompt_fits(tokens.len(), context_size, 256) {
                 bail!("intermediate summaries exceed the model context");
             }
             reduced.push(SectionSummary {
@@ -203,7 +203,7 @@ fn summarize_in_sections(
                     model,
                     context_size,
                     tokens,
-                    192,
+                    256,
                     is_cancelled,
                     report_progress,
                 )?,
@@ -259,11 +259,7 @@ fn generate_tokens(
         final_batch = Some(batch);
     }
     let mut batch = final_batch.context("prompt produced no batches")?;
-    let mut sampler = LlamaSampler::chain_simple([
-        LlamaSampler::temp(0.2),
-        LlamaSampler::top_p(0.9, 1),
-        LlamaSampler::dist(42),
-    ]);
+    let mut sampler = LlamaSampler::greedy();
     let mut decoder = encoding_rs::UTF_8.new_decoder();
     let mut output = String::new();
     for (position, generated) in (i32::try_from(token_count)?..).zip(0..output_limit) {
