@@ -13,7 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        include:
+          - os: windows-latest
+            accelerator-features: ""
+          - os: ubuntu-latest
+            accelerator-features: ""
+          - os: macos-latest
+            accelerator-features: "--features metal"
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -40,7 +46,7 @@ jobs:
         run: cargo clippy --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --all-targets --locked
+        run: cargo test --all-targets --locked ${{ matrix.accelerator-features }}
 
       - name: Build release application
-        run: cargo build --release --locked
+        run: cargo build --release --locked ${{ matrix.accelerator-features }}

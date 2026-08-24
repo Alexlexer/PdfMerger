@@ -97,7 +97,8 @@ destination document group.
 ## Platform prerequisites
 
 - **Windows:** Install Rust with the MSVC toolchain and Visual Studio Build Tools with the **Desktop development with C++** workload.
-- **macOS:** Install Rust and the Xcode command-line tools (`xcode-select --install`).
+- **macOS:** Install Rust, CMake, and the Xcode command-line tools
+  (`xcode-select --install`). Apple Silicon builds can use Metal for local AI inference.
 - **Ubuntu/Debian:** Install Rust and the native desktop development packages used by CI:
 
 ```sh
@@ -117,6 +118,15 @@ cargo run --release --locked
 
 The first build downloads and compiles the Rust dependencies. PdfMerger does not
 require a PDF runtime, browser, web server, account, or cloud service.
+
+On an Apple Silicon Mac, enable Metal acceleration for local GGUF inference with:
+
+```sh
+cargo run --release --locked --features metal
+```
+
+The Metal build uses the same GGUF models as the CPU and CUDA backends. If llama.cpp does not
+detect GPU offload at runtime, summarization remains available through its CPU path.
 
 ## Build
 

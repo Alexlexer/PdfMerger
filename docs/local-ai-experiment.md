@@ -15,8 +15,8 @@ and no loss of its native, private, offline character?
 - Model weights are loaded when a summarization job starts and unloaded when it ends.
 - NVIDIA CUDA builds target RTX 20, 30, 40, and 50 series GPUs rather than one developer GPU.
 - Radeon acceleration through Vulkan is the next hardware experiment.
-- macOS means Apple Silicon only. Metal follows the Radeon experiment; Core ML and the Apple
-  Neural Engine remain a separate later evaluation.
+- macOS means Apple Silicon only. Metal builds use llama.cpp with the same GGUF files as the CPU
+  and CUDA backends; Core ML and the Apple Neural Engine remain a separate later evaluation.
 - Windows and Linux must retain a CPU baseline.
 - Scanned/image-only pages are reported, not sent through hidden OCR.
 - PDF text, prompts, and generated summaries are not logged.
@@ -27,8 +27,9 @@ and no loss of its native, private, offline character?
 2. Exercise the complete job lifecycle with a deterministic mock backend.
 3. Benchmark a small curated set of GGUF models through llama.cpp on CPU.
 4. Verify multi-generation NVIDIA CUDA support and model-memory release after every job.
-5. Prototype Radeon acceleration through Vulkan, retaining the CPU baseline.
-6. Verify Apple Silicon Metal performance and model-memory release after every job.
+5. Enable Apple Silicon Metal builds and verify GPU offload, CPU fallback, performance, and
+   model-memory release after every job.
+6. Prototype Radeon acceleration through Vulkan, retaining the CPU baseline.
 7. Prototype model installation and removal only if inference is viable.
 
 ## Measurements
