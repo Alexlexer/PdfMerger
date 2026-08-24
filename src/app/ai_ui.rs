@@ -5,8 +5,8 @@ use pdf_merger::{
     llama_backend::LlamaCppBackend,
     model::PageSource,
     summarization::{
-        ExtractionLimits, ModelConfig, SummaryAudience, SummaryLength, SummaryPhase,
-        SummaryRequest, extract_pdf_text, run_summary_job,
+        ExtractionLimits, ModelConfig, SummaryAudience, SummaryLanguage, SummaryLength,
+        SummaryPhase, SummaryRequest, extract_pdf_text, run_summary_job,
     },
 };
 
@@ -18,6 +18,7 @@ pub(super) struct AiUiState {
     pub source_path: Option<PathBuf>,
     pub length: SummaryLength,
     pub audience: SummaryAudience,
+    pub language: SummaryLanguage,
     pub result: String,
     pub diagnostics: String,
 }
@@ -30,6 +31,7 @@ impl Default for AiUiState {
             source_path: None,
             length: SummaryLength::Standard,
             audience: SummaryAudience::General,
+            language: SummaryLanguage::SameAsDocument,
             result: String::new(),
             diagnostics: String::new(),
         }
@@ -143,8 +145,49 @@ impl PdfMergerApp {
                         "Technical",
                     );
                 });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Output language:");
+                    ui.selectable_value(
+                        &mut self.ai_ui.language,
+                        SummaryLanguage::SameAsDocument,
+                        "Same as document",
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_ui.language,
+                        SummaryLanguage::English,
+                        "English",
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_ui.language,
+                        SummaryLanguage::French,
+                        "French",
+                    );
+                    if ui
+                        .selectable_label(
+                            matches!(self.ai_ui.language, SummaryLanguage::Custom(_)),
+                            "Custom",
+                        )
+                        .clicked()
+                    {
+                        self.ai_ui.language = SummaryLanguage::Custom(String::new());
+                    }
+                });
+                if let SummaryLanguage::Custom(language) = &mut self.ai_ui.language {
+                    ui.horizontal(|ui| {
+                        ui.label("Language name:");
+                        ui.add(
+                            egui::TextEdit::singleline(language)
+                                .hint_text("e.g. Spanish")
+                                .char_limit(40),
+                        );
+                    });
+                }
                 let can_start = self.ai_ui.model_path.is_some()
                     && self.ai_ui.source_path.is_some()
+                    && !matches!(
+                        &self.ai_ui.language,
+                        SummaryLanguage::Custom(language) if language.trim().is_empty()
+                    )
                     && self.jobs.active_count() == 0;
                 if ui
                     .add_enabled(can_start, egui::Button::new("Summarize locally"))
@@ -199,6 +242,7 @@ impl PdfMergerApp {
             .map(|password| password.to_string());
         let length = self.ai_ui.length;
         let audience = self.ai_ui.audience;
+        let language = self.ai_ui.language.clone();
         self.ai_ui.result.clear();
         self.ai_ui.diagnostics.clear();
         let token = self
@@ -224,6 +268,7 @@ impl PdfMergerApp {
                     document,
                     length,
                     audience,
+                    language,
                 };
                 let model = ModelConfig {
                     id: model_path

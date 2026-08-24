@@ -22,10 +22,19 @@ pub enum SummaryAudience {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SummaryLanguage {
+    SameAsDocument,
+    English,
+    French,
+    Custom(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SummaryRequest {
     pub document: ExtractedDocument,
     pub length: SummaryLength,
     pub audience: SummaryAudience,
+    pub language: SummaryLanguage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -315,8 +324,8 @@ mod tests {
 
     use super::{
         BackendDiagnostics, ExtractedDocument, ExtractionLimits, ModelConfig, SummarizationBackend,
-        SummaryAudience, SummaryLength, SummaryPhase, SummaryProgress, SummaryRequest,
-        SummaryResult, extract_pdf_text, run_summary_job,
+        SummaryAudience, SummaryLanguage, SummaryLength, SummaryPhase, SummaryProgress,
+        SummaryRequest, SummaryResult, extract_pdf_text, run_summary_job,
     };
 
     #[test]
@@ -400,6 +409,7 @@ mod tests {
             },
             length: SummaryLength::Standard,
             audience: SummaryAudience::General,
+            language: SummaryLanguage::SameAsDocument,
         }
     }
 

@@ -5,7 +5,7 @@ use pdf_merger::{
     llama_backend::LlamaCppBackend,
     summarization::{
         ExtractedDocument, ExtractedPage, ExtractionLimits, ModelConfig, SummaryAudience,
-        SummaryLength, SummaryRequest, extract_pdf_text, run_summary_job,
+        SummaryLanguage, SummaryLength, SummaryRequest, extract_pdf_text, run_summary_job,
     },
 };
 
@@ -43,6 +43,7 @@ fn main() -> Result<()> {
             SummaryLength::Short
         },
         audience: SummaryAudience::General,
+        language: SummaryLanguage::SameAsDocument,
     };
     let model = ModelConfig {
         id: "smoke-test".to_owned(),
