@@ -15,7 +15,6 @@ use pdf_merger::{
 mod accessibility;
 mod actions;
 mod ai_ui;
-mod backend_manager;
 mod editing;
 mod export_dialog;
 mod jobs;

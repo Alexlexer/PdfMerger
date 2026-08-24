@@ -2,10 +2,8 @@
 """Assemble an experimental PdfMerger package with runtime AI backends."""
 
 import argparse
-import json
 from pathlib import Path
 import shutil
-import tomllib
 
 CORE_LIBRARIES = ("ggml-base.dll", "ggml.dll", "llama-common.dll", "llama.dll")
 
@@ -48,16 +46,6 @@ def main() -> None:
 
     for backend in backends:
         shutil.copy2(backend, backend_output / backend.name)
-    manifest = {
-        "format": 1,
-        "pdf_merger_version": tomllib.loads(
-            (Path(__file__).resolve().parents[1] / "Cargo.toml").read_text(encoding="utf-8")
-        )["package"]["version"],
-        "runtime_files": [dependency.name for dependency in args.accelerator_runtime],
-    }
-    (backend_output / "backend-pack.json").write_text(
-        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
-    )
     for dependency in args.accelerator_runtime:
         if not dependency.is_file():
             raise SystemExit(f"accelerator runtime file does not exist: {dependency}")
