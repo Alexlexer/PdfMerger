@@ -12,6 +12,12 @@ use pdf_merger::{
 
 use super::{AppMessage, PdfMergerApp, jobs::JobPhase, style};
 
+const RECOMMENDED_MODEL_NAME: &str = "Qwen3.5 4B · Q4_K_M";
+const RECOMMENDED_MODEL_FILE: &str = "Qwen3.5-4B-Q4_K_M.gguf";
+const RECOMMENDED_MODEL_DOWNLOAD: &str =
+    "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf";
+const RECOMMENDED_MODEL_PAGE: &str = "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF";
+
 pub(super) struct AiUiState {
     pub open: bool,
     pub model_path: Option<PathBuf>,
@@ -92,6 +98,32 @@ impl PdfMergerApp {
                     {
                         self.ai_ui.model_path = Some(path);
                     }
+                });
+                ui.group(|ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.strong("Recommended model:");
+                        ui.label(RECOMMENDED_MODEL_NAME);
+                    });
+                    ui.label(
+                        RichText::new(
+                            "About 2.7 GB · multilingual · suitable for an 8 GB NVIDIA GPU or Apple Silicon Mac",
+                        )
+                        .color(style::muted_text(ui)),
+                    );
+                    ui.horizontal_wrapped(|ui| {
+                        ui.hyperlink_to(
+                            format!("Download {RECOMMENDED_MODEL_FILE}"),
+                            RECOMMENDED_MODEL_DOWNLOAD,
+                        );
+                        ui.separator();
+                        ui.hyperlink_to("Model details and license", RECOMMENDED_MODEL_PAGE);
+                    });
+                    ui.label(
+                        RichText::new(
+                            "Model downloads use your browser. After it finishes, click Choose GGUF above.",
+                        )
+                        .color(style::muted_text(ui)),
+                    );
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.label("PDF:");
