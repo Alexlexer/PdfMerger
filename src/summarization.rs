@@ -283,6 +283,9 @@ fn validate_limits(limits: ExtractionLimits) -> Result<()> {
 fn normalize_text(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")
+        .chars()
+        .filter(|character| !character.is_control() || matches!(character, '\n' | '\t'))
+        .collect::<String>()
         .trim()
         .to_owned()
 }
@@ -315,6 +318,14 @@ mod tests {
         SummaryAudience, SummaryLength, SummaryPhase, SummaryProgress, SummaryRequest,
         SummaryResult, extract_pdf_text, run_summary_job,
     };
+
+    #[test]
+    fn strips_pdf_control_bytes_before_tokenization() {
+        assert_eq!(
+            super::normalize_text("alpha\0beta\r\ngamma\tend"),
+            "alphabeta\ngamma\tend"
+        );
+    }
 
     #[derive(Default)]
     struct MockBackend {
