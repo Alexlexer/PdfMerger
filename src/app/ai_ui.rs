@@ -167,6 +167,28 @@ impl PdfMergerApp {
         self.ai_ui.group = pages.first().map(|page| page.group_id);
     }
 
+    pub(super) fn focus_ai_group(&mut self, group_id: u64) {
+        let Some(group) = self
+            .workspace
+            .groups()
+            .into_iter()
+            .find(|g| g.id == group_id)
+        else {
+            return;
+        };
+        self.ai_ui.group = Some(group.id);
+        self.ai_ui.source_path = Some(group.source_path);
+        self.ai_ui.scope = SummaryScope::Group;
+        self.selected = self.workspace.group_page_ids(group.id);
+        self.sync_ai_scope();
+        self.collapsed_groups.remove(&group.id);
+        self.ai_ui.navigate_page = self.workspace.pages().get(group.start).map(|p| p.id);
+    }
+
+    pub(super) fn focused_ai_group(&self) -> Option<u64> {
+        self.ai_ui.group
+    }
+
     fn sync_ai_scope(&mut self) {
         let sources = select_scope(
             self.workspace.pages(),
@@ -231,7 +253,7 @@ impl PdfMergerApp {
         sources
     }
 
-    pub(super) fn show_ai_dialog(&mut self, context: &egui::Context) {
+    pub(super) fn show_ai_dialog(&mut self, root_ui: &mut egui::Ui, context: &egui::Context) {
         let sources = self.pdf_sources();
         if self
             .ai_ui
@@ -282,18 +304,185 @@ impl PdfMergerApp {
         }
         let sources = self.pdf_sources();
         let mut open = self.ai_ui.open;
-        egui::Window::new("Local AI summarization · experimental")
-            .open(&mut open)
+        egui::Panel::right("ai_summary_panel")
             .resizable(true)
-            .default_width(680.0)
-            .vscroll(true)
-            .show(context, |ui| {
+            .default_size(380.0)
+            .size_range(300.0..=560.0)
+            .show(root_ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.heading("AI summary");
+                    if ui.button("Close").clicked() { open = false; }
+                });
+                ui.label("Local processing · verify important facts");
+                ui.separator();
+                egui::ScrollArea::vertical().id_salt("ai_panel_content").show(ui, |ui| {
+                if self.ai_ui.scope == SummaryScope::Original {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("PDF:");
+                    egui::ComboBox::from_id_salt("ai_source_pdf")
+                        .selected_text(
+                            self.ai_ui
+                                .source_path
+                                .as_ref()
+                                .and_then(|path| path.file_name())
+                                .and_then(|name| name.to_str())
+                                .unwrap_or("No PDF available"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for path in &sources {
+                                let label = path
+                                    .file_name()
+                                    .and_then(|name| name.to_str())
+                                    .unwrap_or("PDF");
+                                ui.selectable_value(
+                                    &mut self.ai_ui.source_path,
+                                    Some(path.clone()),
+                                    label,
+                                );
+                            }
+                        });
+                });
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Scope:");
+                    ui.selectable_value(&mut self.ai_ui.scope, SummaryScope::Selected, "Selected pages");
+                    ui.selectable_value(&mut self.ai_ui.scope, SummaryScope::Group, "Document group");
+                    ui.selectable_value(&mut self.ai_ui.scope, SummaryScope::Original, "Original PDF");
+                });
+                if self.ai_ui.scope == SummaryScope::Group {
+                    egui::ComboBox::from_id_salt("summary_group").selected_text(self.workspace.groups().iter().find(|g| Some(g.id) == self.ai_ui.group).map(|g| g.source_path.file_name().unwrap_or_default().to_string_lossy().into_owned()).unwrap_or_else(|| "Choose a document".into())).show_ui(ui, |ui| {
+                        for group in self.workspace.groups() {
+                            ui.selectable_value(&mut self.ai_ui.group, Some(group.id), format!("{} · {} pages", group.source_path.file_name().unwrap_or_default().to_string_lossy(), group.page_count()));
+                        }
+                    });
+                }
+                self.sync_ai_scope();
+                let scope = select_scope(self.workspace.pages(), &self.selected, self.ai_ui.scope, self.ai_ui.group, self.ai_ui.source_path.as_ref());
+                match &scope {
+                    Ok(sources) => { for source in sources { ui.strong(source.path.file_name().unwrap_or_default().to_string_lossy()); } ui.label(format!("{} source PDF(s); {}", sources.len(), if self.ai_ui.scope == SummaryScope::Original { "all pages in the original file (including pages removed from the workspace)" } else { "only pages in the chosen scope" })); }
+                    Err(error) => { ui.colored_label(ui.visuals().warn_fg_color, error.to_string()); }
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Length:");
+                    ui.selectable_value(&mut self.ai_ui.length, SummaryLength::Short, "Short");
+                    ui.selectable_value(
+                        &mut self.ai_ui.length,
+                        SummaryLength::Standard,
+                        "Standard",
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_ui.length,
+                        SummaryLength::Detailed,
+                        "Detailed",
+                    );
+                });
+                ui.collapsing("Summary preferences", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Audience:");
+                    ui.selectable_value(
+                        &mut self.ai_ui.audience,
+                        SummaryAudience::General,
+                        "General",
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_ui.audience,
+                        SummaryAudience::Technical,
+                        "Technical",
+                    );
+                });
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Output language:");
+                    ui.selectable_value(
+                        &mut self.ai_ui.language,
+                        SummaryLanguage::SameAsDocument,
+                        "Same as document",
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_ui.language,
+                        SummaryLanguage::English,
+                        "English",
+                    );
+                    ui.selectable_value(
+                        &mut self.ai_ui.language,
+                        SummaryLanguage::French,
+                        "French",
+                    );
+                    if ui
+                        .selectable_label(
+                            matches!(self.ai_ui.language, SummaryLanguage::Custom(_)),
+                            "Custom",
+                        )
+                        .clicked()
+                    {
+                        self.ai_ui.language = SummaryLanguage::Custom(String::new());
+                    }
+                });
+                if let SummaryLanguage::Custom(language) = &mut self.ai_ui.language {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("Language name:");
+                        ui.add(
+                            egui::TextEdit::singleline(language)
+                                .hint_text("e.g. Spanish")
+                                .char_limit(40),
+                        );
+                    });
+                }
+                });
+                let can_start = (if self.ai_ui.use_studio { self.ai_ui.studio.is_some() && !self.ai_ui.studio_model.is_empty() && self.ai_ui.discovery.is_none() } else { self.ai_ui.model_path.is_some() })
+                    && scope.is_ok()
+                    && !matches!(
+                        &self.ai_ui.language,
+                        SummaryLanguage::Custom(language) if language.trim().is_empty()
+                    )
+                    && self.jobs.active_count() == 0;
+                if ui
+                    .add_enabled(can_start, egui::Button::new("Summarize locally"))
+                    .clicked()
+                {
+                    self.start_ai_summary(context);
+                }
+                if let Some(id) = self.ai_ui.active_summary
+                    && let Some(job) = self.jobs.primary().filter(|job| job.id == id) {
+                        ui.add(egui::ProgressBar::new(job.completed as f32 / job.total.max(1) as f32).text(&job.detail));
+                        if ui.add_enabled(!job.cancelling, egui::Button::new("Cancel summary")).clicked() { self.jobs.cancel(id); }
+                }
+                if !self.ai_ui.diagnostics.is_empty() {
+                    ui.label(RichText::new(&self.ai_ui.diagnostics).color(style::muted_text(ui)));
+                }
+                ui.collapsing("Extraction coverage (not fact verification)", |ui| {
+                    for (path, report) in &self.ai_ui.coverage.sources {
+                        ui.strong(path.display().to_string());
+                        ui.label(format!("Processed: {:?}\nSkipped: {:?}\nFailed: {:?}\nTruncated by extraction limits: {:?}\nTesseract OCR: {:?}\nAI vision: {:?}", report.processed, report.skipped, report.failed, report.truncated, report.ocr, report.vision));
+                        for warning in &report.warnings { ui.colored_label(ui.visuals().warn_fg_color, warning); }
+                    }
+                });
+                if !self.ai_ui.result.is_empty() {
+                    ui.separator();
+                    ui.heading(if self.ai_ui.coverage.partial() || !self.ai_ui.warnings.is_empty() { "Partial or unverified summary" } else { "Generated summary" });
+                    ui.label(
+                        RichText::new("AI-generated; verify important details.")
+                            .color(ui.visuals().warn_fg_color),
+                    );
+                    for warning in &self.ai_ui.warnings { ui.colored_label(ui.visuals().warn_fg_color, warning); }
+                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                        if let Some(id) = summary_text(ui, &self.ai_ui.result, &self.ai_ui.cited, &self.ai_ui.coverage) {
+                            self.open_summary_citation(id, context);
+                        }
+                    });
+                    if ui.button("Copy summary").clicked() {
+                        ui.ctx().copy_text(self.ai_ui.copy_summary());
+                    }
+                }
+                ui.separator();
+                egui::CollapsingHeader::new("AI setup")
+                    .default_open(!self.ai_ui.use_studio && self.ai_ui.model_path.is_none())
+                    .show(ui, |ui| {
                 ui.label(
                     RichText::new("Runs locally. PDF text and summaries are never uploaded.")
                         .color(style::muted_text(ui)),
                 );
                 ui.separator();
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("AI backend:");
                     if ui.selectable_value(&mut self.ai_ui.use_studio, false, "Built-in GGUF").clicked()
                         | ui.selectable_value(&mut self.ai_ui.use_studio, true, "LM Studio").clicked() {
@@ -302,7 +491,7 @@ impl PdfMergerApp {
                 });
                 ui.label(&self.ai_ui.studio_status);
                 if self.ai_ui.use_studio {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label("Local server port:");
                         if ui.add(egui::DragValue::new(&mut self.ai_ui.studio_port).range(1..=65535)).changed() {
                             self.ai_ui.invalidate_discovery();
@@ -366,53 +555,7 @@ impl PdfMergerApp {
                         );
                     });
                 }
-                if self.ai_ui.scope == SummaryScope::Original {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("PDF:");
-                    egui::ComboBox::from_id_salt("ai_source_pdf")
-                        .selected_text(
-                            self.ai_ui
-                                .source_path
-                                .as_ref()
-                                .and_then(|path| path.file_name())
-                                .and_then(|name| name.to_str())
-                                .unwrap_or("No PDF available"),
-                        )
-                        .show_ui(ui, |ui| {
-                            for path in &sources {
-                                let label = path
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("PDF");
-                                ui.selectable_value(
-                                    &mut self.ai_ui.source_path,
-                                    Some(path.clone()),
-                                    label,
-                                );
-                            }
-                        });
-                });
-                }
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Scope:");
-                    ui.selectable_value(&mut self.ai_ui.scope, SummaryScope::Selected, "Selected pages");
-                    ui.selectable_value(&mut self.ai_ui.scope, SummaryScope::Group, "Document group");
-                    ui.selectable_value(&mut self.ai_ui.scope, SummaryScope::Original, "Original PDF");
-                });
-                if self.ai_ui.scope == SummaryScope::Group {
-                    egui::ComboBox::from_id_salt("summary_group").selected_text(format!("Group {}", self.ai_ui.group.unwrap_or(0))).show_ui(ui, |ui| {
-                        for group in self.workspace.groups() {
-                            ui.selectable_value(&mut self.ai_ui.group, Some(group.id), format!("Group {} · {}", group.id, group.source_path.display()));
-                        }
-                    });
-                }
-                self.sync_ai_scope();
-                let scope = select_scope(self.workspace.pages(), &self.selected, self.ai_ui.scope, self.ai_ui.group, self.ai_ui.source_path.as_ref());
-                match &scope {
-                    Ok(sources) => { ui.label(format!("{} source PDF(s); {}", sources.len(), if self.ai_ui.scope == SummaryScope::Original { "all pages in the original file (including pages removed from the workspace)" } else { "only pages in the chosen scope" })); }
-                    Err(error) => { ui.colored_label(ui.visuals().warn_fg_color, error.to_string()); }
-                }
-                ui.horizontal(|ui| {
                     ui.label("Context budget (tokens):");
                     ui.add(egui::DragValue::new(&mut self.ai_ui.context_size).range(4096..=131072).speed(512));
                 });
@@ -428,117 +571,15 @@ impl PdfMergerApp {
                     ui.label(if vision { "The selected AI model can read page images. No Tesseract or language packs are needed; accuracy depends on the model and scan quality." } else { "For scans, choose an LM Studio model marked ‘vision’. Text-only models and the built-in GGUF backend cannot read page images." });
                 }
                 if self.ai_ui.scan_reader == ScanReader::Tesseract {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.label("OCR language codes:"); ui.text_edit_singleline(&mut self.ai_ui.ocr_language);
                         if ui.button("Check Tesseract").clicked() { self.ai_ui.ocr_executable = local_ocr::available(); }
                     });
                     ui.label(if self.ai_ui.ocr_executable.is_some() { "Tesseract found. Language data must be installed (e.g. eng or eng+fra)." } else { "Tesseract not found. Install it on PATH and restart or check again. Text summaries and PDF editing remain available." });
                     ui.hyperlink_to("Local OCR installation", "https://tesseract-ocr.github.io/tessdoc/Installation.html");
                 }
-                ui.horizontal(|ui| {
-                    ui.label("Length:");
-                    ui.selectable_value(&mut self.ai_ui.length, SummaryLength::Short, "Short");
-                    ui.selectable_value(
-                        &mut self.ai_ui.length,
-                        SummaryLength::Standard,
-                        "Standard",
-                    );
-                    ui.selectable_value(
-                        &mut self.ai_ui.length,
-                        SummaryLength::Detailed,
-                        "Detailed",
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Audience:");
-                    ui.selectable_value(
-                        &mut self.ai_ui.audience,
-                        SummaryAudience::General,
-                        "General",
-                    );
-                    ui.selectable_value(
-                        &mut self.ai_ui.audience,
-                        SummaryAudience::Technical,
-                        "Technical",
-                    );
-                });
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("Output language:");
-                    ui.selectable_value(
-                        &mut self.ai_ui.language,
-                        SummaryLanguage::SameAsDocument,
-                        "Same as document",
-                    );
-                    ui.selectable_value(
-                        &mut self.ai_ui.language,
-                        SummaryLanguage::English,
-                        "English",
-                    );
-                    ui.selectable_value(
-                        &mut self.ai_ui.language,
-                        SummaryLanguage::French,
-                        "French",
-                    );
-                    if ui
-                        .selectable_label(
-                            matches!(self.ai_ui.language, SummaryLanguage::Custom(_)),
-                            "Custom",
-                        )
-                        .clicked()
-                    {
-                        self.ai_ui.language = SummaryLanguage::Custom(String::new());
-                    }
-                });
-                if let SummaryLanguage::Custom(language) = &mut self.ai_ui.language {
-                    ui.horizontal(|ui| {
-                        ui.label("Language name:");
-                        ui.add(
-                            egui::TextEdit::singleline(language)
-                                .hint_text("e.g. Spanish")
-                                .char_limit(40),
-                        );
                     });
-                }
-                let can_start = (if self.ai_ui.use_studio { self.ai_ui.studio.is_some() && !self.ai_ui.studio_model.is_empty() && self.ai_ui.discovery.is_none() } else { self.ai_ui.model_path.is_some() })
-                    && scope.is_ok()
-                    && !matches!(
-                        &self.ai_ui.language,
-                        SummaryLanguage::Custom(language) if language.trim().is_empty()
-                    )
-                    && self.jobs.active_count() == 0;
-                if ui
-                    .add_enabled(can_start, egui::Button::new("Summarize locally"))
-                    .clicked()
-                {
-                    self.start_ai_summary(context);
-                }
-                if !self.ai_ui.diagnostics.is_empty() {
-                    ui.label(RichText::new(&self.ai_ui.diagnostics).color(style::muted_text(ui)));
-                }
-                ui.collapsing("Extraction coverage (not fact verification)", |ui| {
-                    for (path, report) in &self.ai_ui.coverage.sources {
-                        ui.strong(path.display().to_string());
-                        ui.label(format!("Processed: {:?}\nSkipped: {:?}\nFailed: {:?}\nTruncated by extraction limits: {:?}\nTesseract OCR: {:?}\nAI vision: {:?}", report.processed, report.skipped, report.failed, report.truncated, report.ocr, report.vision));
-                        for warning in &report.warnings { ui.colored_label(ui.visuals().warn_fg_color, warning); }
-                    }
                 });
-                if !self.ai_ui.result.is_empty() {
-                    ui.separator();
-                    ui.heading(if self.ai_ui.coverage.partial() || !self.ai_ui.warnings.is_empty() { "Partial or unverified summary" } else { "Generated summary" });
-                    ui.label(
-                        RichText::new("AI-generated; verify important details.")
-                            .color(ui.visuals().warn_fg_color),
-                    );
-                    for warning in &self.ai_ui.warnings { ui.colored_label(ui.visuals().warn_fg_color, warning); }
-                    egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-                        if let Some(id) = summary_text(ui, &self.ai_ui.result, &self.ai_ui.cited, &self.ai_ui.coverage) {
-                            self.open_summary_citation(id, context);
-                        }
-                    });
-                    if ui.button("Copy summary").clicked() {
-                        ui.ctx().copy_text(self.ai_ui.copy_summary());
-                    }
-                }
             });
         self.ai_ui.open = open;
     }
@@ -608,22 +649,34 @@ impl PdfMergerApp {
                 context.request_repaint_after(std::time::Duration::from_millis(100));
             }
         }
-        let mut open = true;
+    }
+
+    pub(super) fn show_cited_page(&mut self, ui: &mut egui::Ui) -> bool {
+        if self.ai_ui.citation_texture.is_none() && self.ai_ui.citation_view.is_none() {
+            return false;
+        }
+        if ui.button("Back to pages").clicked() {
+            self.ai_ui.citation_view = None;
+            self.ai_ui.citation_texture = None;
+            return false;
+        }
+        if self.ai_ui.citation_view.is_some() {
+            ui.spinner();
+            ui.label("Opening source page…");
+        }
         if let Some((label, texture)) = &self.ai_ui.citation_texture {
-            egui::Window::new("Summary source page")
-                .open(&mut open)
-                .default_width(600.0)
-                .show(context, |ui| {
-                    ui.label(label);
-                    ui.label("Original source PDF page. Check the cited facts here.");
-                    egui::ScrollArea::both().show(ui, |ui| {
-                        ui.add(egui::Image::new(texture).fit_to_original_size(0.65));
-                    });
+            ui.label(label);
+            egui::ScrollArea::both()
+                .id_salt("cited_page_canvas")
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Image::new(texture)
+                            .max_width(ui.available_width())
+                            .maintain_aspect_ratio(true),
+                    );
                 });
         }
-        if !open {
-            self.ai_ui.citation_texture = None;
-        }
+        true
     }
 
     fn start_ai_summary(&mut self, context: &egui::Context) {
@@ -988,6 +1041,120 @@ fn candidate_paths(directories: &[PathBuf]) -> Vec<PathBuf> {
 mod tests {
     use super::{RECOMMENDED_MODEL_FILE, candidate_paths};
     use std::path::PathBuf;
+
+    fn workspace_app() -> super::PdfMergerApp {
+        use super::super::*;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let workspace = Workspace::default();
+        let export_settings = ExportSettings::default();
+        PdfMergerApp {
+            project_ui: project_ui::ProjectUiState::new(
+                workspace.fingerprint(),
+                export_settings.clone(),
+            ),
+            export_dialog: export_dialog::ExportDialogState::new(export_settings.clone()),
+            workspace,
+            export_settings,
+            sender,
+            receiver,
+            jobs: jobs::JobManager::default(),
+            status: String::new(),
+            status_is_error: false,
+            preview_textures: Default::default(),
+            pdf_previews: Default::default(),
+            pdf_preview_order: Default::default(),
+            pending_pdf_previews: Default::default(),
+            failed_pdf_previews: Default::default(),
+            selected: Default::default(),
+            collapsed_groups: Default::default(),
+            split_dialog: Default::default(),
+            pdf_passwords: Default::default(),
+            password_prompt: Default::default(),
+            modal_focus: Default::default(),
+            appearance: Default::default(),
+            ai_ui: Default::default(),
+        }
+    }
+
+    #[test]
+    fn choosing_another_document_changes_scope_and_cancels_old_summary() {
+        use pdf_merger::model::{PageDraft, PageSource};
+        let mut app = workspace_app();
+        for name in ["one.pdf", "two.pdf"] {
+            app.workspace.append(vec![PageDraft {
+                source: PageSource::Pdf {
+                    path: name.into(),
+                    page_number: 1,
+                },
+                title: name.into(),
+                subtitle: String::new(),
+                preview: None,
+            }]);
+        }
+        let groups = app.workspace.groups();
+        app.focus_ai_group(groups[0].id);
+        let token = app
+            .jobs
+            .start("Summary", super::super::jobs::JobPhase::Summarizing, 1);
+        app.ai_ui.active_summary = Some(token.id());
+        app.ai_ui.result = "Old summary".into();
+        app.focus_ai_group(groups[1].id);
+        assert!(token.is_cancelled());
+        assert!(app.ai_ui.result.is_empty());
+        assert_eq!(app.ai_ui.source_path, Some("two.pdf".into()));
+        assert_eq!(app.ai_ui.scope, super::SummaryScope::Group);
+        assert_eq!(app.selected, app.workspace.group_page_ids(groups[1].id));
+        assert_eq!(
+            app.ai_ui.summary_sources,
+            vec![(PathBuf::from("two.pdf"), Some(vec![1]))]
+        );
+    }
+
+    #[test]
+    fn docked_panels_leave_space_for_document_canvas() {
+        use eframe::egui;
+        use pdf_merger::model::{PageDraft, PageSource};
+        for width in [920.0, 1280.0] {
+            let context = egui::Context::default();
+            context.begin_pass(egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 800.0),
+                )),
+                ..Default::default()
+            });
+            let mut app = workspace_app();
+            app.workspace.append(vec![PageDraft {
+                source: PageSource::Pdf {
+                    path: "synthetic.pdf".into(),
+                    page_number: 1,
+                },
+                title: "Synthetic".into(),
+                subtitle: String::new(),
+                preview: None,
+            }]);
+            app.focus_ai_group(app.workspace.groups()[0].id);
+            app.ai_ui.open = true;
+            app.ai_ui.model_path = Some("mock.gguf".into());
+            let mut ui = egui::Ui::new(
+                context.clone(),
+                egui::Id::new("root"),
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 800.0),
+                )),
+            );
+            app.document_sidebar(&mut ui, &context);
+            app.show_ai_dialog(&mut ui, &context);
+            assert!(
+                ui.available_width() >= 300.0,
+                "canvas width {}",
+                ui.available_width()
+            );
+            assert!(!app.has_active_modal());
+            let _ = context.end_pass();
+        }
+    }
 
     #[test]
     fn summary_layout_wraps_without_overlapping_rows_or_losing_text() {
