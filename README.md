@@ -160,3 +160,25 @@ and can be regenerated with `cargo about generate about.hbs --locked`.
 ## Supported platforms
 
 GitHub Actions verifies tests and release builds on Windows, Ubuntu, and macOS.
+
+### LM Studio backend
+
+Open the Local AI dialog to automatically detect LM Studio's local server on port
+1234. Enable the server in LM Studio's Developer tab first. PdfMerger selects a
+loaded language model when available; you can choose another model from the list.
+Downloaded models require LM Studio's just-in-time loading, or you can load them
+in LM Studio before summarizing. Embedding models are excluded.
+
+Use **LM Studio → Refresh LM Studio** after starting the server or changing models.
+A custom local port can be entered beside Refresh. The integration currently uses
+an unauthenticated server on IPv4 loopback (`127.0.0.1`); authenticated servers show
+an explanatory error. Requests bypass proxies and never follow redirects.
+LM Studio controls model loading and GPU settings; PdfMerger leaves its models
+loaded when a job ends. Cancellation closes the active HTTP request.
+
+Long documents use bounded sections followed by a final synthesis, recursively
+reducing notes when needed. Choose an explicit scope and inspect clickable source
+references and extraction coverage. Optional local Tesseract OCR can recover scanned
+pages. The built-in GGUF backend remains available.
+See [summary setup, limits, and verification](docs/ai-summarization.md).
+See [LM Studio server setup](https://lmstudio.ai/docs/developer/rest/quickstart).

@@ -11,6 +11,13 @@ const APP_NAME: &str = "PdfMerger";
 const SMOKE_TEST_ARGUMENT: &str = "--smoke-test";
 
 fn main() -> eframe::Result {
+    if std::env::args_os().nth(1).as_deref() == Some(OsStr::new("--local-ocr-render")) {
+        std::process::exit(if pdf_merger::local_ocr::render_worker().is_ok() {
+            0
+        } else {
+            1
+        });
+    }
     if smoke_test_requested(std::env::args_os().skip(1)) {
         validate_embedded_assets();
         return Ok(());

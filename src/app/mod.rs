@@ -59,13 +59,16 @@ pub(super) enum AppMessage {
         result: Result<project_ui::ProjectOpenResult, String>,
         cancelled: bool,
     },
+    SummaryCoverage {
+        job_id: jobs::JobId,
+        coverage: pdf_merger::summary_scope::SummaryCoverage,
+    },
     SummaryComplete {
         job_id: jobs::JobId,
         result: Result<
             (
                 pdf_merger::summarization::SummaryResult,
                 pdf_merger::summarization::BackendDiagnostics,
-                Vec<u32>,
             ),
             String,
         >,
@@ -157,7 +160,15 @@ impl PdfMergerApp {
                     self.jobs.finish(job_id);
                     let imported = pages.len();
                     let requested = password_requests.len();
+                    let first_new_page = self.workspace.pages().len();
                     self.workspace.append(pages);
+                    if imported > 0 {
+                        self.reset_ai_document(first_new_page);
+                        self.selected = self.workspace.pages()[first_new_page..]
+                            .iter()
+                            .map(|page| page.id)
+                            .collect();
+                    }
                     self.enqueue_password_requests(password_requests);
                     for error in &errors {
                         self.jobs
@@ -302,7 +313,17 @@ impl PdfMergerApp {
                                 error,
                             );
                         }
+                        let loaded =
+                            matches!(&result, Ok(project_ui::ProjectOpenResult::Loaded { .. }));
                         self.finish_project_open(path, result);
+                        if loaded {
+                            self.reset_ai_document(0);
+                        }
+                    }
+                }
+                AppMessage::SummaryCoverage { job_id, coverage } => {
+                    if self.ai_ui.active_summary == Some(job_id) {
+                        self.ai_ui.coverage = coverage;
                     }
                 }
                 AppMessage::SummaryComplete {
@@ -311,22 +332,23 @@ impl PdfMergerApp {
                     cancelled,
                 } => {
                     self.jobs.finish(job_id);
+                    if self.ai_ui.active_summary != Some(job_id) {
+                        continue;
+                    }
+                    self.ai_ui.active_summary = None;
                     if cancelled {
-                        self.set_status("Local summarization cancelled; model unloaded.", false);
+                        self.set_status("Local summarization cancelled.", false);
                     } else {
                         match result {
-                            Ok((summary, diagnostics, scanned_pages)) => {
+                            Ok((summary, diagnostics)) => {
                                 self.ai_ui.result = summary.text;
-                                let skipped = if scanned_pages.is_empty() {
-                                    String::new()
-                                } else {
-                                    format!(" · skipped image-only pages {scanned_pages:?}")
-                                };
+                                self.ai_ui.cited = summary.cited_pages;
+                                self.ai_ui.warnings = summary.warnings;
                                 self.ai_ui.diagnostics = format!(
-                                    "{} on {}{skipped} · model unloaded",
+                                    "{} on {}",
                                     diagnostics.runtime, diagnostics.accelerator
                                 );
-                                self.set_status("Local summary complete; model unloaded.", false);
+                                self.set_status(if self.ai_ui.coverage.partial() || !self.ai_ui.warnings.is_empty() { "Partial or unverified summary; review source coverage and warnings." } else { "Summary generated. Verify cited facts against the source pages." }, false);
                             }
                             Err(error) => {
                                 self.jobs.record(
