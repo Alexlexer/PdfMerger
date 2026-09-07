@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-alpha.*", "v[0-9]+.[0-9]+.[0-9]+-beta.*"]
   pull_request:
     paths:
       - Cargo.toml
@@ -156,10 +156,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          prerelease=false
+          case "${GITHUB_REF_NAME}" in
+            *-alpha.*|*-beta.*) prerelease=true ;;
+          esac
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release edit "${GITHUB_REF_NAME}" --draft --title "PdfMerger ${GITHUB_REF_NAME}" --notes-file release-notes.md
+            gh release edit "${GITHUB_REF_NAME}" --draft --prerelease="${prerelease}" --title "PdfMerger ${GITHUB_REF_NAME}" --notes-file release-notes.md
           else
-            gh release create "${GITHUB_REF_NAME}" --verify-tag --draft --title "PdfMerger ${GITHUB_REF_NAME}" --notes-file release-notes.md
+            gh release create "${GITHUB_REF_NAME}" --verify-tag --draft --prerelease="${prerelease}" --title "PdfMerger ${GITHUB_REF_NAME}" --notes-file release-notes.md
           fi
           gh release upload "${GITHUB_REF_NAME}" release/* --clobber
-          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          gh release edit "${GITHUB_REF_NAME}" --draft=false --prerelease="${prerelease}"

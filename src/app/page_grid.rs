@@ -146,6 +146,13 @@ impl PdfMergerApp {
                                                         },
                                                     );
                                                 });
+                                            if self.ai_ui.navigate_page == Some(page.id) {
+                                                ui.scroll_to_rect(
+                                                    _zone.response.rect,
+                                                    Some(Align::Center),
+                                                );
+                                                self.ai_ui.navigate_page = None;
+                                            }
                                             if let Some(from) = dropped {
                                                 move_request =
                                                     Some((*from, index, group.id, false));

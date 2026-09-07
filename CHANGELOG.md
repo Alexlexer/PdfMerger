@@ -7,6 +7,26 @@ published from matching `vMAJOR.MINOR.PATCH` tags.
 
 ## [Unreleased]
 
+## [0.5.0-beta.1] - 2026-09-07
+
+### Added
+
+- LM Studio backend with automatic local-server discovery when opening the AI dialog.
+- Automatic selection of a loaded language model, model selection, refresh, and custom local ports.
+- Local HTTP summarization with cancellation, output-language selection, and page references.
+- Compatibility with LM Studio's native v1 and older v0 model discovery endpoints.
+
+### Beta notes
+
+- Enable LM Studio's local server in the Developer tab before opening the AI dialog.
+  The default port is 1234. API authentication is not yet supported.
+- Long documents are summarized section by section. LM Studio manages its own models
+  and GPU settings; PdfMerger does not unload server models when jobs finish.
+- Windows and Linux packages use CPU for built-in GGUF inference; macOS Apple Silicon
+  uses Metal. LM Studio can use its configured GPU on any supported platform.
+- Packages are unsigned. Windows SmartScreen and macOS Gatekeeper may prompt before opening.
+- This is a beta release; verify generated summaries against the source PDF.
+
 ## [0.4.0] - 2026-08-24
 
 ### Added
@@ -57,7 +77,8 @@ published from matching `vMAJOR.MINOR.PATCH` tags.
   selection, undo/redo, splitting, project persistence, background jobs, and
   structure-preserving PDF export.
 
-[Unreleased]: https://github.com/Alexlexer/PdfMerger/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Alexlexer/PdfMerger/compare/v0.5.0-beta.1...HEAD
+[0.5.0-beta.1]: https://github.com/Alexlexer/PdfMerger/compare/v0.4.0...v0.5.0-beta.1
 [0.4.0]: https://github.com/Alexlexer/PdfMerger/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Alexlexer/PdfMerger/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Alexlexer/PdfMerger/compare/v0.1.0...v0.2.0

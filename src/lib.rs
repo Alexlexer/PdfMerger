@@ -1,10 +1,12 @@
 pub mod document;
 pub mod export_settings;
 pub mod llama_backend;
+pub mod lm_studio_backend;
 pub mod model;
 pub mod project;
 pub mod split;
 pub mod summarization;
+pub mod summary_pipeline;
 
 // llama-cpp-sys 0.1.154 omits these C++ build-info symbols on Windows GNU targets.
 #[cfg(all(target_os = "windows", target_env = "gnu"))]
@@ -31,3 +33,6 @@ mod windows_llama_build_info {
         c"x86_64-windows-gnu".as_ptr()
     }
 }
+
+pub mod local_ocr;
+pub mod summary_scope;

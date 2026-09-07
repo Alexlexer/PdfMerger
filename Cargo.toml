@@ -1,6 +1,6 @@
 [package]
 name = "pdf-merger"
-version = "0.4.0"
+version = "0.5.0-beta.1"
 edition = "2024"
 description = "A native desktop PDF merger and image-to-PDF arranger"
 license = "MIT"
@@ -17,6 +17,7 @@ metal = ["llama-cpp-2/metal"]
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
 eframe = { version = "0.35", default-features = false, features = [
     "accesskit",
     "default_fonts",
@@ -47,6 +48,8 @@ printpdf = { version = "0.12", default-features = false, features = [
     "webp",
 ] }
 rfd = "0.17"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio = { version = "1", features = ["rt", "time"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 zeroize = "1.9.0"

@@ -43,6 +43,10 @@ are configured. Release notes must call this out clearly.
 
 ## Publish
 
+For prereleases, use a version such as `0.5.0-beta.1` (or `0.5.0-alpha.1`) in
+both manifests. The matching tag triggers all native builds and publishes a GitHub
+prerelease, preserving the latest stable release.
+
 Create an annotated tag matching the Cargo version and push it:
 
 ```sh
