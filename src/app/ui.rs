@@ -55,11 +55,22 @@ impl PdfMergerApp {
                     }
 
                     if ui
-                        .add_enabled(!self.workspace.is_empty(), egui::Button::new("Local AI…"))
-                        .on_hover_text("Experimentally summarize a PDF with a local GGUF model")
+                        .add_enabled(
+                            !self.workspace.is_empty(),
+                            egui::Button::new(if self.ai_ui.open {
+                                "Hide AI"
+                            } else {
+                                "AI summary"
+                            }),
+                        )
+                        .on_hover_text("Show or hide the local AI summary panel")
                         .clicked()
                     {
-                        self.open_ai_dialog();
+                        if self.ai_ui.open {
+                            self.ai_ui.open = false;
+                        } else {
+                            self.open_ai_dialog();
+                        }
                     }
 
                     let export = egui::Button::new(
@@ -73,6 +84,50 @@ impl PdfMergerApp {
                         self.choose_export_path(context);
                     }
                 });
+            });
+    }
+
+    pub(super) fn document_sidebar(&mut self, root_ui: &mut egui::Ui, context: &egui::Context) {
+        if self.workspace.is_empty() {
+            return;
+        }
+        // Leave enough space for page cards and AI on smaller native windows.
+        if root_ui.available_width() < 1000.0 {
+            return;
+        }
+        egui::Panel::left("document_sidebar")
+            .resizable(true)
+            .default_size(210.0)
+            .size_range(160.0..=280.0)
+            .show(root_ui, |ui| {
+                ui.heading("Documents");
+                if ui.button("Add files").clicked() {
+                    self.choose_files(context);
+                }
+                ui.separator();
+                egui::ScrollArea::vertical()
+                    .id_salt("document_list")
+                    .show(ui, |ui| {
+                        for group in self.workspace.groups() {
+                            let name = group
+                                .source_path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy();
+                            let response = ui
+                                .add(
+                                    egui::Button::selectable(
+                                        self.focused_ai_group() == Some(group.id),
+                                        format!("{name}\n{} pages", group.page_count()),
+                                    )
+                                    .wrap(),
+                                )
+                                .on_hover_text(group.source_path.display().to_string());
+                            if response.clicked() {
+                                self.focus_ai_group(group.id);
+                            }
+                        }
+                    });
             });
     }
 
@@ -114,6 +169,7 @@ impl PdfMergerApp {
                     .inner_margin(Margin::same(22)),
             )
             .show(root_ui, |ui| {
+                if self.show_cited_page(ui) { return; }
                 if self.workspace.is_empty() {
                     self.empty_state(ui, context);
                 } else {

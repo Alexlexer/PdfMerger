@@ -397,13 +397,14 @@ impl eframe::App for PdfMergerApp {
 
         self.top_bar(root_ui, &context);
         self.bottom_bar(root_ui);
+        self.document_sidebar(root_ui, &context);
+        self.show_ai_dialog(root_ui, &context);
         self.central_panel(root_ui, &context);
         self.sync_modal_focus(&context);
         self.show_export_dialog(&context);
         self.show_split_dialog(&context);
         self.show_project_dialogs(&context);
         self.show_password_prompt(&context);
-        self.show_ai_dialog(&context);
         self.jobs.show_details(&context);
         self.sync_modal_focus(&context);
         self.file_drop_overlay(&context);
